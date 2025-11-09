@@ -14,7 +14,7 @@ import torch
 import json
 from datetime import datetime
 from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer, SFTConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
 from peft import LoraConfig, get_peft_model
 from trl import SFTTrainer
 
@@ -108,7 +108,7 @@ def main():
     ds = ds.map(format_example, remove_columns=ds.column_names)
     
     # Configuración optimizada para RTX 4060 Ti (16GB VRAM)
-    sft_args = SFTConfig(
+    sft_args = TrainingArguments(
         output_dir=OUT_DIR,
         per_device_train_batch_size=6,  # Adjusted for RTX 4060 Ti
         gradient_accumulation_steps=4,

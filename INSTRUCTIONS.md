@@ -492,6 +492,34 @@ print("✅ Modelo mergeado en:", OUT)
 
 ### Entrenar el Modelo
 
+**⚠️ SOLUCIÓN A ERROR DE TRL IMPORTS:**
+
+Si encuentras el error `ImportError: cannot import name 'SFTConfig' from 'trl'`:
+
+```bash
+# 1. Verificar versión de TRL instalada
+pip list | grep trl
+
+# 2. Actualizar TRL a versión compatible
+pip install --upgrade trl==0.7.6
+
+# 3. Si persiste el error, usar este import alternativo:
+# En lugar de:
+# from trl import SFTTrainer, SFTConfig
+# from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# Usar:
+# from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
+# from trl import SFTTrainer
+```
+
+**Para TRL v0.7.x (recomendado), usar este import:**
+
+```bash
+# Verificar que tienes la versión correcta
+pip install trl==0.7.6 transformers==4.35.2
+```
+
 ```bash
 # Activar entorno
 source .venv/bin/activate
