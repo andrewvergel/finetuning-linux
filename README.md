@@ -51,18 +51,40 @@ JSONL
 - Basado en LoRA (r=32) sobre las capas `c_attn` y `c_proj` de DialoGPT-medium (ajustable por constantes).
 - El entrenamiento usa por defecto `data/instructions.jsonl` (puedes sobreescribirlo con la variable `FINETUNE_DATA_PATH`).
 - Duplica datasets pequeños hasta ~420 ejemplos solo sobre el split de entrenamiento.
-- Entrenamiento conservador para dataset pequeño: batch efectivo 6 (2×3), 12 épocas, scheduler `cosine` (warmup 10%) y sin weight decay.
+- Entrenamiento altamente regularizado: batch efectivo 12 (1×12), 12 épocas, scheduler `linear` (warmup 10%) y con weight decay 0.1.
 - Genera `training_info.json` con metadatos y deja un log detallado en `logs/debug_last_run.log`.
-- Reserva automáticamente 10% para validación, corre evaluación al final de cada época y guarda el mejor checkpoint según `eval_loss`.
-- Ejecuta una evaluación rápida al final tomando 6 ejemplos del split de validación (o un fallback predefinido) y deja la comparación esperada/obtenida en el log.
+- Reserva automáticamente 15% para validación, corre evaluación al final de cada época y guarda el mejor checkpoint según `eval_loss`.
+- Ejecuta una evaluación rápida al final tomando 12 ejemplos del split de validación (o un fallback predefinido) y deja la comparación esperada/obtenida en el log.
+- Usa `response_template="Assistant:"` y `train_on_prompt=False` en `SFTTrainer` para que solo aprenda de la respuesta, no del prompt.
+Soporta variables de entorno (`FT_*`). Puedes crear un `.env` en la raíz con los valores que necesites.
 
-### ⚠️ Limitaciones actuales y recomendaciones
-- **DialoGPT-medium (350M)** es un modelo grande para un dataset de solo 16 ejemplos únicos. Es normal que delire o repita respuestas.
-- **Recomendaciones para mejor rendimiento:**
-  1. **Cambiar a un modelo más pequeño** (ej.: `gpt2-medium` o `distilgpt2`) que requiera menos datos.
-  2. **Ampliar dataset**: 100–200 ejemplos únicos (no repeticiones) cubren mejor la variabilidad real.
-  3. **Evaluación consistente:** `eval_loss` debe bajar de forma estable, pero con 16 ejemplos el modelo aprende frases, no conceptos.
-  4. **Early stopping:** parar cuando `eval_loss` deje de mejorar 3 épocas seguidas.
+### 🧾 Ejemplo de `.env`
+```bash
+FT_MODEL_ID=microsoft/DialoGPT-medium
+FT_DATA_PATH=data/instructions.jsonl
+FT_OUT_DIR=models/out-tinyllama-lora
+FT_DATASET_MIN_EXAMPLES=240
+FT_PER_DEVICE_BATCH_SIZE=1
+FT_GRADIENT_ACCUMULATION=12
+FT_NUM_EPOCHS=12
+FT_LEARNING_RATE=2e-5
+FT_WARMUP_RATIO=0.1
+FT_LR_SCHEDULER=linear
+FT_WEIGHT_DECAY=0.1
+FT_LORA_RANK=32
+FT_LORA_ALPHA=32
+FT_LORA_DROPOUT=0.3
+FT_LORA_TARGET_MODULES=c_attn,c_proj
+FT_LOGGING_STEPS=5
+FT_SAVE_STRATEGY=epoch
+FT_SAVE_TOTAL_LIMIT=3
+FT_DATASET_SHUFFLE_SEED=42
+FT_VALIDATION_SPLIT=0.2
+FT_DEBUG_LOG_FILE=debug_last_run.log
+FT_EVAL_MAX_NEW_TOKENS=220
+FT_EVAL_SAMPLE_SIZE=10
+```
+> Duplica el archivo como `.env` y personaliza los valores si necesitas cambiar cualquier hiperparámetro sin editar el script.
 
 ### 🔍 Interpretación de logs y tuning
 #### Pérdida de entrenamiento
@@ -86,14 +108,14 @@ JSONL
 - `loss` de entrenamiento entre 7.0–8.5 al inicio, bajando gradualmente.
 
 ### 📊 Guía rápida de hiperparámetros
-- `DATASET_MIN_EXAMPLES = 160` → número mínimo de muestras tras repetir el split de entrenamiento (ej.: con 20 instrucciones reales se repite 8×, pero con 20 y split 20% se obtiene ~17 train/3 eval). *Subirlo* (200) añade más iteraciones; *bajarlo* (120) para datasets más variados o smoke-tests muy rápidos.
+- `DATASET_MIN_EXAMPLES = 240` → número mínimo de muestras tras repetir el split de entrenamiento (ej.: con 20 instrucciones reales se repite 12×). *Subirlo* (300) añade más iteraciones; *bajarlo* (180) cuando agregues más ejemplos únicos.
 - `PER_DEVICE_BATCH_SIZE = 1` → muestras procesadas por GPU antes de acumular gradientes. Consume ~1 GB y ofrece actualizaciones más frecuentes (1×8). *Subirlo* (2) si la GPU lo permite; *bajarlo* no es posible (mínimo 1).
-- `GRADIENT_ACCUMULATION = 8` → número de pasos antes de aplicar actualización (batch efectivo = 1×8 = 8). *Subirlo* (10) para aún más regularización; *bajarlo* (4) si necesitas converger más rápido.
-- `NUM_EPOCHS = 18` → cada ejemplo se ve 18 veces tras repetición (~2 880 muestras). *Subirlo* (22) si la pérdida sigue bajando; *bajarlo* (14) para convergencia más rápida con datasets más ricos.
-- `LEARNING_RATE = 2.5e-5` → velocidad de aprendizaje base (25 micro). Valores bajos evitan sobreajuste en datasets repetidos. *Subirlo* (3e-5) si la pérdida se estanca; *bajarlo* (2e-5) para máxima estabilidad.
-- `WARMUP_RATIO = 0.05` → porcentaje inicial de pasos con LR creciente (primer ~170 pasos). *Subirlo* (0.1) si el LR arranca demasiado alto; *bajarlo* (0.02) para convergencia más rápida.
-- `LORA_DROPOUT = 0.25` → regularización sobre las capas adaptadas (alta). *Subirlo* (0.3) si sigue delirando; *bajarlo* (0.2) cuando veasunderfitting y quieras más fidelidad.
-- `EVAL_SAMPLE_SIZE = 8` → cantidad de ejemplos del split de validación usados en la evaluación rápida (ahora hay más validación total con split 20%).
+- `GRADIENT_ACCUMULATION = 12` → número de pasos antes de aplicar actualización (batch efectivo = 1×12 = 12). *Subirlo* (16) suaviza más los gradientes; *bajarlo* (8) acelera si agregas datos.
+- `NUM_EPOCHS = 12` → cada ejemplo se ve 12 veces tras repetición (~2 880 muestras con repeat 12×). *Subirlo* (14) si `eval_loss` aún baja; *bajarlo* (10) cuando añadas más ejemplos originales.
+- `LEARNING_RATE = 2e-5` → velocidad de aprendizaje base (20 micro). *Subirlo* (2.5e-5) si la pérdida se estanca; *bajarlo* (1.5e-5) cuando notes inestabilidad en validación.
+- `WARMUP_RATIO = 0.1` → porcentaje inicial de pasos con LR creciente (primer ~170 pasos con 12 épocas). *Subirlo* (0.15) si el LR arranca agresivo; *bajarlo* (0.05) cuando uses LR más bajo.
+- `LORA_DROPOUT = 0.3` → regularización sobre las capas adaptadas. *Subirlo* (0.35) si persisten repeticiones; *bajarlo* (0.25) cuando agregues más variación al dataset.
+- `EVAL_SAMPLE_SIZE = 10` → cantidad de ejemplos del split de validación usados en la evaluación rápida (aprovecha el split del 20%).
 
 ## 💬 Script de Inferencia (`scripts/inference_lora.py`)
 - Carga el adaptador LoRA desde `models/out-tinyllama-lora`.

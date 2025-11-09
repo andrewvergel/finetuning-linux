@@ -19,6 +19,7 @@ import math
 import torch
 import json
 import logging
+from typing import List
 from datetime import datetime
 from datasets import load_dataset, concatenate_datasets
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
@@ -29,38 +30,92 @@ from trl import SFTTrainer
 SCRIPT_VERSION = "1.1.1"
 SCRIPT_NAME = "finetune_lora.py"
 
+
+def load_env_file(path: str = ".env") -> None:
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as env_file:
+            for line in env_file:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip("\"\'")
+                os.environ.setdefault(key, value)
+    except Exception as exc:
+        print(f"⚠️ Could not load {path}: {exc}", file=sys.stderr)
+
+
+def env_int(key: str, default: int) -> int:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def env_float(key: str, default: float) -> float:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def env_str(key: str, default: str) -> str:
+    return os.getenv(key, default)
+
+
+def env_list(key: str, default: List[str]) -> List[str]:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    return items or default
+
+
+load_env_file()
+
 # ======== Tunable Hyperparameters ========
-MODEL_ID = "microsoft/DialoGPT-medium"
-DATA_PATH = os.getenv("FINETUNE_DATA_PATH", "data/instructions.jsonl")
-OUT_DIR = "models/out-tinyllama-lora"
+MODEL_ID = env_str("FT_MODEL_ID", "microsoft/DialoGPT-medium")
+DATA_PATH = env_str("FT_DATA_PATH", "data/instructions.jsonl")
+OUT_DIR = env_str("FT_OUT_DIR", "models/out-tinyllama-lora")
 
 # Dataset expansion & batching
-DATASET_MIN_EXAMPLES = 180
-PER_DEVICE_BATCH_SIZE = 2
-GRADIENT_ACCUMULATION = 3
+DATASET_MIN_EXAMPLES = env_int("FT_DATASET_MIN_EXAMPLES", 240)
+PER_DEVICE_BATCH_SIZE = env_int("FT_PER_DEVICE_BATCH_SIZE", 1)
+GRADIENT_ACCUMULATION = env_int("FT_GRADIENT_ACCUMULATION", 12)
 
 # Training schedule
-NUM_EPOCHS = 12
-LEARNING_RATE = 2e-5
-WARMUP_RATIO = 0.1
-LR_SCHEDULER = "cosine"
-WEIGHT_DECAY = 0.0
+NUM_EPOCHS = env_int("FT_NUM_EPOCHS", 12)
+LEARNING_RATE = env_float("FT_LEARNING_RATE", 2e-5)
+WARMUP_RATIO = env_float("FT_WARMUP_RATIO", 0.1)
+LR_SCHEDULER = env_str("FT_LR_SCHEDULER", "linear")
+WEIGHT_DECAY = env_float("FT_WEIGHT_DECAY", 0.1)
 
 # LoRA configuration
-LORA_RANK = 32
-LORA_ALPHA = 32
-LORA_DROPOUT = 0.1
-LORA_TARGET_MODULES = ["c_attn", "c_proj"]
+LORA_RANK = env_int("FT_LORA_RANK", 32)
+LORA_ALPHA = env_int("FT_LORA_ALPHA", 32)
+LORA_DROPOUT = env_float("FT_LORA_DROPOUT", 0.3)
+LORA_TARGET_MODULES = env_list("FT_LORA_TARGET_MODULES", ["c_attn", "c_proj"])
 
 # Misc
-LOGGING_STEPS = 5
-SAVE_STRATEGY = "epoch"
-SAVE_TOTAL_LIMIT = 3
-DATASET_SHUFFLE_SEED = 42
-VALIDATION_SPLIT = 0.1
-DEBUG_LOG_FILE = "debug_last_run.log"
-EVAL_MAX_NEW_TOKENS = 220
-EVAL_SAMPLE_SIZE = 6
+LOGGING_STEPS = env_int("FT_LOGGING_STEPS", 5)
+SAVE_STRATEGY = env_str("FT_SAVE_STRATEGY", "epoch")
+SAVE_TOTAL_LIMIT = env_int("FT_SAVE_TOTAL_LIMIT", 3)
+DATASET_SHUFFLE_SEED = env_int("FT_DATASET_SHUFFLE_SEED", 42)
+VALIDATION_SPLIT = env_float("FT_VALIDATION_SPLIT", 0.2)
+DEBUG_LOG_FILE = env_str("FT_DEBUG_LOG_FILE", "debug_last_run.log")
+EVAL_MAX_NEW_TOKENS = env_int("FT_EVAL_MAX_NEW_TOKENS", 220)
+EVAL_SAMPLE_SIZE = env_int("FT_EVAL_SAMPLE_SIZE", 10)
 EVAL_FALLBACK_PROMPTS = [
     {
         "system": "Eres un asistente experto en procesos internos.",
@@ -257,6 +312,7 @@ def main():
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
+        optim="adamw_torch",
     )
     logging.info(">> Training configuration set")
 
@@ -276,6 +332,8 @@ def main():
         max_seq_length=max_seq_len,
         packing=use_packing,
         dataset_text_field="text",
+        response_template="Assistant:",
+        train_on_prompt=False,
     )
     logging.info(">> Trainer initialized")
 
