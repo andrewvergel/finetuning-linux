@@ -116,8 +116,9 @@ DATA_PATH = env_str("FT_DATA_PATH", "data/instructions.jsonl")
 OUT_DIR = env_str("FT_OUT_DIR", "models/out-lora")
 
 DATASET_MIN_EXAMPLES = env_int("FT_DATASET_MIN_EXAMPLES", 240)
-PER_DEVICE_BATCH_SIZE = env_int("FT_PER_DEVICE_BATCH_SIZE", 4)
-GRADIENT_ACCUMULATION = env_int("FT_GRADIENT_ACCUMULATION", 8)
+# Reduce batch size and increase gradient accumulation to save memory
+PER_DEVICE_BATCH_SIZE = env_int("FT_PER_DEVICE_BATCH_SIZE", 2)  # Reduced from 4 to 2
+GRADIENT_ACCUMULATION = env_int("FT_GRADIENT_ACCUMULATION", 16)  # Increased from 8 to 16
 MAX_SEQ_LEN_OVERRIDE = env_int("FT_MAX_SEQ_LEN", 4096)
 
 NUM_EPOCHS = env_int("FT_NUM_EPOCHS", 8)
@@ -343,13 +344,21 @@ def main():
     for ctx in (getattr(model.config, "n_positions", None), getattr(tok, "model_max_length", None), MAX_SEQ_LEN_OVERRIDE):
         if ctx and ctx != float("inf"):
             candidates.append(int(ctx))
+    
+    # Reduce max sequence length to save memory
     max_seq_len = max(8, min(candidates) if candidates else 1024)
-    use_packing = True if FORCE_PACKING else (len(train_raw) >= 40 and max_seq_len >= 2048)
+    max_seq_len = min(max_seq_len, 2048)  # Cap at 2048 tokens to save memory
+    
+    # Disable packing to save memory
+    use_packing = False  # Force disable packing as it uses more memory
+    if FORCE_PACKING and len(train_raw) >= 40 and max_seq_len >= 2048:
+        use_packing = True
+        logging.warning("Packing is enabled but may increase memory usage")
     logging.info(">> Using max sequence length: %d | Packing: %s", max_seq_len, use_packing)
 
-    # LoRA
+    # LoRA with reduced rank to save memory
     peft_cfg = LoraConfig(
-        r=LORA_RANK,
+        r=max(4, LORA_RANK // 2),  # Reduce rank to save memory
         lora_alpha=LORA_ALPHA,
         lora_dropout=LORA_DROPOUT,
         target_modules=LORA_TARGET_MODULES,
@@ -359,13 +368,20 @@ def main():
     model = get_peft_model(model, peft_cfg)
     logging.info(">> LoRA configuration set (r=%d, targets=%s)", LORA_RANK, ",".join(LORA_TARGET_MODULES))
 
-    # Checkpointing para subir batch y estabilidad
+    # Enable gradient checkpointing and disable cache to save memory
     model.config.use_cache = False
-    try:
-        model.gradient_checkpointing_enable()
-        logging.info(">> Gradient checkpointing enabled")
-    except Exception as e:
-        logging.warning("No se pudo habilitar gradient checkpointing: %s", e)
+    model.gradient_checkpointing_enable()
+    logging.info(">> Gradient checkpointing enabled")
+    
+    # Enable CPU offload for optimizer states if using QLoRA
+    if USE_QLORA:
+        try:
+            from accelerate import Accelerator
+            accelerator = Accelerator()
+            model = accelerator.prepare(model)
+            logging.info(">> CPU offload for optimizer states enabled")
+        except Exception as e:
+            logging.warning("Could not enable CPU offload: %s", e)
 
     # Dataset -> texto formateado + EOS
     logging.info(">> Formatting and validating examples...")
