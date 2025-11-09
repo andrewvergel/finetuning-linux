@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 LoRA Fine-tuning Script for RTX 4060 Ti
-Version: 1.0.6
+Version: 1.0.7
 Author: Auto-generated from INSTRUCTIONS.md
 Optimized for: RTX 4060 Ti (16GB VRAM)
 
 Changelog:
+- v1.0.7: Use dataset_text_field pipeline to avoid tokenizer batch errors
 - v1.0.6: Fix formatting pipeline to provide proper text batches to SFTTrainer
 - v1.0.5: Align max sequence length with model limits, guard packing for small contexts
 - v1.0.4: Enhanced training parameters for larger datasets, improved stability
@@ -25,7 +26,7 @@ from peft import LoraConfig, get_peft_model
 from trl import SFTTrainer
 
 # Version information
-SCRIPT_VERSION = "1.0.6"
+SCRIPT_VERSION = "1.0.7"
 SCRIPT_NAME = "finetune_lora.py"
 
 def log_version_info():
@@ -124,9 +125,6 @@ def main():
     print(">> Formatting examples...")
     ds = ds.map(format_example, remove_columns=ds.column_names)
     
-    def formatting_func(example):
-        return [example["text"]]
-    
     # Configuración optimizada para RTX 4060 Ti (16GB VRAM)
     sft_args = TrainingArguments(
         output_dir=OUT_DIR,
@@ -161,9 +159,9 @@ def main():
         tokenizer=tok,
         train_dataset=ds,
         args=sft_args,
-        formatting_func=formatting_func,
-        max_seq_length=max_seq_len,  # Add max_seq_length here instead of in TrainingArguments
-        packing=use_packing,  # Conditionally enable packing based on dataset size
+        max_seq_length=max_seq_len,
+        packing=use_packing,
+        dataset_text_field="text",
     )
     print(">> Trainer initialized")
     
