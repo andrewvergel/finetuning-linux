@@ -115,35 +115,41 @@ MODEL_ID = env_str("FT_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
 DATA_PATH = env_str("FT_DATA_PATH", "data/instructions.jsonl")
 OUT_DIR = env_str("FT_OUT_DIR", "models/out-lora")
 
+# Memory optimization parameters
 DATASET_MIN_EXAMPLES = env_int("FT_DATASET_MIN_EXAMPLES", 240)
-# Reduce batch size and increase gradient accumulation to save memory
-PER_DEVICE_BATCH_SIZE = env_int("FT_PER_DEVICE_BATCH_SIZE", 2)  # Reduced from 4 to 2
-GRADIENT_ACCUMULATION = env_int("FT_GRADIENT_ACCUMULATION", 16)  # Increased from 8 to 16
-MAX_SEQ_LEN_OVERRIDE = env_int("FT_MAX_SEQ_LEN", 4096)
+PER_DEVICE_BATCH_SIZE = env_int("FT_PER_DEVICE_BATCH_SIZE", 1)  # Reduced to 1
+GRADIENT_ACCUMULATION = env_int("FT_GRADIENT_ACCUMULATION", 16)  # Increased to 16
+MAX_SEQ_LEN_OVERRIDE = env_int("FT_MAX_SEQ_LEN", 1024)  # Reduced to 1024
 
+# Training parameters
 NUM_EPOCHS = env_int("FT_NUM_EPOCHS", 8)
-LEARNING_RATE = env_float("FT_LEARNING_RATE", 1e-4)
-WARMUP_RATIO = env_float("FT_WARMUP_RATIO", 0.15)
+LEARNING_RATE = env_float("FT_LEARNING_RATE", 2e-4)  # Slightly increased for better convergence with smaller batch
+WARMUP_RATIO = env_float("FT_WARMUP_RATIO", 0.1)  # Reduced warmup
 LR_SCHEDULER = env_str("FT_LR_SCHEDULER", "cosine")
 WEIGHT_DECAY = env_float("FT_WEIGHT_DECAY", 0.01)
 
-LORA_RANK = env_int("FT_LORA_RANK", 16)
-LORA_ALPHA = env_int("FT_LORA_ALPHA", 32)
-LORA_DROPOUT = env_float("FT_LORA_DROPOUT", 0.15)
-LORA_TARGET_MODULES = env_list("FT_LORA_TARGET_MODULES", ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])
+# LoRA parameters - optimized for memory efficiency
+LORA_RANK = env_int("FT_LORA_RANK", 8)  # Reduced rank
+LORA_ALPHA = env_int("FT_LORA_ALPHA", 16)  # Reduced alpha
+LORA_DROPOUT = env_float("FT_LORA_DROPOUT", 0.05)  # Reduced dropout
+# Target only query and value layers to save memory
+LORA_TARGET_MODULES = env_list("FT_LORA_TARGET_MODULES", ["q_proj", "v_proj"])
 
+# Training configuration
 LOGGING_STEPS = env_int("FT_LOGGING_STEPS", 10)
 SAVE_STRATEGY = env_str("FT_SAVE_STRATEGY", "steps")
 SAVE_TOTAL_LIMIT = env_int("FT_SAVE_TOTAL_LIMIT", 2)
 DATASET_SHUFFLE_SEED = env_int("FT_DATASET_SHUFFLE_SEED", 42)
 VALIDATION_SPLIT = env_float("FT_VALIDATION_SPLIT", 0.2)
 DEBUG_LOG_FILE = env_str("FT_DEBUG_LOG_FILE", "debug_last_run.log")
-EVAL_MAX_NEW_TOKENS = env_int("FT_EVAL_MAX_NEW_TOKENS", 220)
-EVAL_SAMPLE_SIZE = env_int("FT_EVAL_SAMPLE_SIZE", 10)
-EVAL_STEPS = env_int("FT_EVAL_STEPS", 100)
-SAVE_STEPS = env_int("FT_SAVE_STEPS", 100)
-FORCE_PACKING = env_bool("FT_FORCE_PACKING", True)
-USE_QLORA = env_bool("FT_USE_QLORA", False)
+EVAL_MAX_NEW_TOKENS = env_int("FT_EVAL_MAX_NEW_TOKENS", 128)  # Reduced for evaluation
+EVAL_SAMPLE_SIZE = env_int("FT_EVAL_SAMPLE_SIZE", 5)  # Reduced samples for evaluation
+EVAL_STEPS = env_int("FT_EVAL_STEPS", 50)  # Evaluate more frequently
+SAVE_STEPS = env_int("FT_SAVE_STEPS", 50)  # Save more frequently
+
+# Memory optimization flags
+FORCE_PACKING = env_bool("FT_FORCE_PACKING", False)  # Disabled to save memory
+USE_QLORA = env_bool("FT_USE_QLORA", True)  # Enable QLoRA for 4-bit quantization
 TRUST_REMOTE_CODE = env_bool("FT_TRUST_REMOTE_CODE", True)
 
 # Hardening/ruido
@@ -347,23 +353,22 @@ def main():
     
     # Reduce max sequence length to save memory
     max_seq_len = max(8, min(candidates) if candidates else 1024)
-    max_seq_len = min(max_seq_len, 2048)  # Cap at 2048 tokens to save memory
+    max_seq_len = min(max_seq_len, 1024)  # Further reduce to 1024 tokens to save memory
     
-    # Disable packing to save memory
-    use_packing = False  # Force disable packing as it uses more memory
-    if FORCE_PACKING and len(train_raw) >= 40 and max_seq_len >= 2048:
-        use_packing = True
-        logging.warning("Packing is enabled but may increase memory usage")
+    # Force disable packing to save memory
+    use_packing = False
+    logging.info("Packing is disabled to save memory")
     logging.info(">> Using max sequence length: %d | Packing: %s", max_seq_len, use_packing)
 
-    # LoRA with reduced rank to save memory
+    # LoRA configuration with memory optimization
     peft_cfg = LoraConfig(
-        r=max(4, LORA_RANK // 2),  # Reduce rank to save memory
+        r=LORA_RANK,
         lora_alpha=LORA_ALPHA,
         lora_dropout=LORA_DROPOUT,
         target_modules=LORA_TARGET_MODULES,
         bias="none",
         task_type="CAUSAL_LM",
+        inference_mode=False,
     )
     model = get_peft_model(model, peft_cfg)
     logging.info(">> LoRA configuration set (r=%d, targets=%s)", LORA_RANK, ",".join(LORA_TARGET_MODULES))
