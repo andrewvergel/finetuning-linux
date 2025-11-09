@@ -28,10 +28,11 @@ source .venv/bin/activate
 # 3. Actualizar pip e instalar dependencias
 pip install --upgrade pip setuptools wheel
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install "numpy<2.0" pyarrow==14.0.1
 pip install -r requirements.txt
 ```
 > 💡 Si partes de un servidor recién formateado, instala previamente los drivers NVIDIA, CUDA 12.1 y utilidades del sistema (detallado en secciones posteriores del repositorio original).
-> 📦 El archivo `requirements.txt` (incluido en el repo) contiene todas las librerías auxiliares requeridas para el proyecto.
+> 📦 `requirements.txt` incluye todas las librerías auxiliares; aun así, instalamos `numpy<2.0` y `pyarrow==14.0.1` antes para evitar conflictos conocidos con `datasets` (error `PyExtensionType`).
 > 🔍 Antes de entrenar, puedes ejecutar `python scripts/validate_environment.py` para verificar versiones de Python, CUDA, VRAM disponible, dataset y dependencias.
 
 ## 📚 Dataset de Instrucciones

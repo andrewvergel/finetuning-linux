@@ -9,3 +9,5 @@ bitsandbytes
 xformers
 tqdm
 tensorboard
+numpy<2.0
+pyarrow==14.0.1
