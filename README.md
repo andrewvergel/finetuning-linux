@@ -25,13 +25,14 @@ cd finetuning-linux
 python3 -m venv .venv
 source .venv/bin/activate
 
-# 3. Actualizar pip y dependencias clave
+# 3. Actualizar pip e instalar dependencias
 pip install --upgrade pip setuptools wheel
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install transformers==4.35.2 datasets==2.14.6 peft==0.6.0 accelerate==0.24.1 trl==0.7.6
-pip install sentencepiece safetensors bitsandbytes xformers tqdm tensorboard
+pip install -r requirements.txt
 ```
 > 💡 Si partes de un servidor recién formateado, instala previamente los drivers NVIDIA, CUDA 12.1 y utilidades del sistema (detallado en secciones posteriores del repositorio original).
+> 📦 El archivo `requirements.txt` (incluido en el repo) contiene todas las librerías auxiliares requeridas para el proyecto.
+> 🔍 Antes de entrenar, puedes ejecutar `python scripts/validate_environment.py` para verificar versiones de Python, CUDA, VRAM disponible, dataset y dependencias.
 
 ## 📚 Dataset de Instrucciones
 ```bash
@@ -95,3 +96,14 @@ Este proyecto es de uso personal y demuestra capacidades de MLOps / IA aplicada.
 **Autor:** Andrew Vergel  ·  [LinkedIn](https://www.linkedin.com/in/andrewvergel/)  ·  [Repositorio GitHub](https://github.com/andrewvergel/finetuning-linux)
 
 ¡Gracias por revisar este proyecto! Estoy abierto a colaborar en iniciativas de IA aplicada, automatización de procesos y plataformas de asistentes inteligentes.
+
+## ☁️ Infraestructura Recomendada
+Para quienes no cuenten con una RTX 4060 Ti local, recomiendo utilizar instancias bajo demanda en [cloud.vast.ai](https://cloud.vast.ai/instances/). Las pruebas finales de este proyecto se realizaron en la instancia `27712045` (host `79466`, machine `13313`) con las siguientes características:
+
+- **GPU:** 16 GB VRAM (CUDA 12.9, ~21.6 TFLOPS)
+- **CPU:** AMD Ryzen 9 3900X (12/24 hilos)
+- **RAM:** 64 GB DDR4
+- **Almacenamiento:** NVMe PCIe 4.0 (4 TB, ~4.7 GB/s)
+- **Red:** ~1.6 Gbps simétricos
+
+La plataforma ofrece una buena relación costo/rendimiento (≈236 DLP/$/hr) y permite desplegar rápidamente el entorno descrito en este repositorio.
