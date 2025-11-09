@@ -58,19 +58,13 @@ SAVE_STEPS = 100
 DATASET_SHUFFLE_SEED = 42
 DEBUG_LOG_FILE = "debug_last_run.log"
 EVAL_MAX_NEW_TOKENS = 220
-EVAL_PROMPTS = [
+EVAL_SAMPLE_SIZE = 3
+EVAL_FALLBACK_PROMPTS = [
     {
         "system": "Eres un asistente experto en procesos internos.",
-        "user": "Dame los pasos para conciliar pagos de los lunes."
-    },
-    {
-        "system": "Habla en tono profesional y conciso.",
-        "user": "Resume este procedimiento en tres bullets."
-    },
-    {
-        "system": "Sé preciso y técnico.",
-        "user": "¿Qué es un rollback de base de datos?"
-    },
+        "user": "Dame los pasos para conciliar pagos de los lunes.",
+        "expected": "1) Exporta el CSV del banco..."
+    }
 ]
 
 
@@ -116,12 +110,13 @@ def format_example(example):
     return {"text": prompt}
 
 
-def run_eval(model, tok, device):
-    if not EVAL_PROMPTS:
+def run_eval(model, tok, device, eval_prompts):
+    if not eval_prompts:
+        logging.warning(">> No evaluation prompts available. Skipping quick evaluation.")
         return
-    logging.info(">> Running quick evaluation on sample prompts...")
+    logging.info(">> Running quick evaluation on %d sample prompts...", len(eval_prompts))
     model.eval()
-    for sample in EVAL_PROMPTS:
+    for sample in eval_prompts:
         composed_prompt = (
             f"System: {sample['system']}\n"
             f"User: {sample['user']}\n"
@@ -141,6 +136,9 @@ def run_eval(model, tok, device):
         assistant_reply = decoded.split("Assistant:")[-1].strip()
         logging.info("[Eval] User: %s", sample["user"])
         logging.info("[Eval] Assistant: %s", assistant_reply)
+        expected = sample.get("expected")
+        if expected:
+            logging.info("[Eval] Expected: %s", expected)
 
 
 def main():
@@ -162,6 +160,22 @@ def main():
     logging.info(">> Loading dataset from: %s", DATA_PATH)
     ds = load_dataset("json", data_files=DATA_PATH)["train"]
     logging.info(">> Dataset loaded: %d examples", len(ds))
+
+    eval_prompts = []
+    sample_size = min(EVAL_SAMPLE_SIZE, len(ds))
+    if sample_size > 0:
+        base_indices = list(range(sample_size))
+        for idx in base_indices:
+            row = ds[idx]
+            eval_prompts.append(
+                {
+                    "system": row.get("system", ""),
+                    "user": row.get("input", ""),
+                    "expected": row.get("output", ""),
+                }
+            )
+    else:
+        eval_prompts = EVAL_FALLBACK_PROMPTS
 
     logging.info(">> Loading model: %s", MODEL_ID)
     tok = AutoTokenizer.from_pretrained(MODEL_ID)
@@ -281,7 +295,7 @@ def main():
     logging.info("✅ Logs disponibles en: logs/")
     logging.info("✅ Training info saved to training_info.json")
 
-    run_eval(trainer.model, tok, device)
+    run_eval(trainer.model, tok, device, eval_prompts)
 
     logging.info("🎉 Training completed at %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     logging.info("📄 Debug log stored at %s", log_path)
