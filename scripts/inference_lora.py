@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 LoRA Inference Script for RTX 4060 Ti
-Version: 1.0.1
+Version: 1.0.2
 Author: Auto-generated from INSTRUCTIONS.md
 Optimized for: RTX 4060 Ti (16GB VRAM)
 
 Changelog:
+- v1.0.2: Use deterministic decoding suited for instruction-tuned LoRA adapters
 - v1.0.1: Added safety checks, improved error handling, enhanced GPU memory management
-- v1.0.0: Initial version with RTX 4060 Ti optimization
 """
 
 import torch
@@ -18,7 +18,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
 # Version information
-SCRIPT_VERSION = "1.0.1"
+SCRIPT_VERSION = "1.0.2"
 SCRIPT_NAME = "inference_lora.py"
 
 def log_version_info():
@@ -132,15 +132,13 @@ def chat(user, system="Eres un asistente profesional y conciso.", model=None, to
                 ids.attention_mask = ids.attention_mask[:, -2048:]
         
         gen = model.generate(
-            **ids, 
-            max_new_tokens=400,  # Optimized for RTX 4060 Ti
-            do_sample=True, 
-            top_p=0.95, 
-            temperature=0.7,
+            **ids,
+            max_new_tokens=200,
+            do_sample=False,
             pad_token_id=tok.eos_token_id,
             eos_token_id=tok.eos_token_id,
-            use_cache=True,  # Optimization for RTX 4060 Ti
-            repetition_penalty=1.1  # Prevent repetitive outputs
+            use_cache=True,
+            repetition_penalty=1.05,
         )
         
         response = tok.decode(gen[0], skip_special_tokens=True)

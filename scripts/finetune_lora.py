@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 LoRA Fine-tuning Script for RTX 4060 Ti
-Version: 1.0.7
+Version: 1.0.8
 Author: Auto-generated from INSTRUCTIONS.md
 Optimized for: RTX 4060 Ti (16GB VRAM)
 
 Changelog:
+- v1.0.8: Tune hyperparameters for tiny datasets (more epochs, smaller batches)
 - v1.0.7: Use dataset_text_field pipeline to avoid tokenizer batch errors
 - v1.0.6: Fix formatting pipeline to provide proper text batches to SFTTrainer
 - v1.0.5: Align max sequence length with model limits, guard packing for small contexts
@@ -26,7 +27,7 @@ from peft import LoraConfig, get_peft_model
 from trl import SFTTrainer
 
 # Version information
-SCRIPT_VERSION = "1.0.7"
+SCRIPT_VERSION = "1.0.8"
 SCRIPT_NAME = "finetune_lora.py"
 
 def log_version_info():
@@ -128,21 +129,22 @@ def main():
     # Configuración optimizada para RTX 4060 Ti (16GB VRAM)
     sft_args = TrainingArguments(
         output_dir=OUT_DIR,
-        per_device_train_batch_size=4,  # Reduced batch size for larger dataset
-        gradient_accumulation_steps=6,  # Increased for stable training
-        learning_rate=1e-4,  # Reduced learning rate for stability
-        num_train_epochs=5,  # Increased epochs for better learning
-        logging_steps=10,
-        save_steps=500,
+        per_device_train_batch_size=2,  # Smaller batch for tiny dataset
+        gradient_accumulation_steps=1,
+        learning_rate=2e-4,
+        num_train_epochs=30,
+        logging_steps=5,
+        save_steps=100,
         evaluation_strategy="no",
-        warmup_ratio=0.1,  # Increased warmup for larger dataset
+        warmup_ratio=0.05,
+        lr_scheduler_type="cosine",
+        weight_decay=0.0,
         dataloader_pin_memory=True,
         report_to="tensorboard",
         logging_dir="logs",
         fp16=True,
         dataloader_num_workers=2,
         tf32=True,
-        # Removed invalid parameters: max_seq_length, packing
     )
     print(">> Training configuration set")
     
