@@ -2,7 +2,7 @@
 
 ⸻
 
-# Sistema de Fine-tuning LoRA para Ubuntu + GPU NVIDIA
+# Sistema de Fine-tuning LoRA para Ubuntu + RTX 4060 Ti (16GB VRAM)
 
 ## 🚀 INSTALACIÓN COMPLETA DESDE CERO
 
@@ -41,6 +41,38 @@ sudo apt install -y \
 
 **⚠️ IMPORTANTE**: Reinicia el sistema después de instalar el driver:
 ```bash
+sudo reboot
+```
+
+### 🔧 SOLUCIÓN A CONFLICTOS DE DRIVERS NVIDIA
+
+**Si encuentras errores de dependencias como "conflicts with nvidia-driver-575":**
+
+```bash
+# 1. Verificar drivers NVIDIA actuales
+nvidia-smi
+dpkg -l | grep nvidia
+
+# 2. Remover todos los drivers NVIDIA existentes
+sudo apt remove --purge -y nvidia-*
+sudo apt autoremove -y
+sudo apt autoclean
+
+# 3. Limpiar residuos
+sudo rm -rf /usr/local/cuda*
+sudo rm -rf ~/.nvidia*
+
+# 4. Actualizar sistema después de limpieza
+sudo apt update
+
+# 5. Instalar driver más reciente (compatible con RTX 4090)
+sudo apt install -y nvidia-driver-570  # Driver más reciente
+# O usar el PPA para drivers más actualizados:
+# sudo add-apt-repository ppa:graphics-drivers/ppa -y
+# sudo apt update
+# sudo apt install -y nvidia-driver-570
+
+# 6. Reiniciar sistema
 sudo reboot
 ```
 
@@ -109,7 +141,7 @@ pip install --upgrade pip
 ### Paso 6) Instalación de PyTorch con CUDA
 
 ```bash
-# Instalar PyTorch con soporte CUDA 12.1
+# Instalar PyTorch con soporte CUDA 12.1 (optimizado para RTX 4090)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 # Verificar que CUDA funciona
@@ -121,15 +153,16 @@ if torch.cuda.is_available():
     print(f'GPU CUDA: {torch.cuda.get_device_name(0)}')
     print(f'Versión CUDA: {torch.version.cuda}')
     print(f'Device count: {torch.cuda.device_count()}')
-    # Test de rendimiento
-    x = torch.randn(1000, 1000).cuda()
-    y = torch.randn(1000, 1000).cuda()
+    print(f'VRAM Total: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB')
+    # Test de rendimiento RTX 4090
+    x = torch.randn(2000, 2000).cuda()
+    y = torch.randn(2000, 2000).cuda()
     import time
     start = time.time()
     z = torch.mm(x, y)
     torch.cuda.synchronize()
     end = time.time()
-    print(f'Matrix multiplication (1000x1000): {(end-start)*1000:.2f}ms')
+    print(f'Matrix multiplication (2000x2000): {(end-start)*1000:.2f}ms')
 else:
     print('❌ CUDA no está disponible')
 "
@@ -138,16 +171,18 @@ else:
 ### Paso 7) Instalación de Librerías de Machine Learning
 
 ```bash
-# Stack de Hugging Face (versiones compatibles)
-pip install transformers==4.25.1
-pip install datasets==2.13.2
-pip install peft==0.3.0
-pip install accelerate==0.20.3
-pip install trl==0.7.4
+# Stack optimizado para RTX 4090
+pip install transformers==4.35.2  # Versión más reciente
+pip install datasets==2.14.6
+pip install peft==0.6.0  # Versión actualizada
+pip install accelerate==0.24.1
+pip install trl==0.7.6
 pip install sentencepiece
 pip install safetensors
 
-# Librerías adicionales útiles
+# Librerías adicionales para modelos grandes
+pip install bitsandbytes  # Para quantización
+pip install xformers      # Para eficiencia de memoria
 pip install jupyterlab
 pip install matplotlib seaborn pandas numpy
 pip install tqdm tensorboard
@@ -203,10 +238,10 @@ JSONL
 
 ## 🔧 SCRIPTS DE FINE-TUNING
 
-### Script de Fine-tuning (Optimizado para CUDA)
+### Script de Fine-tuning (Optimizado para RTX 4060 Ti)
 
 ```python
-# scripts/finetune_lora.py
+# scripts/finetune_lora.py - Optimizado para RTX 4060 Ti 16GB
 import os, torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -216,9 +251,12 @@ from trl import SFTTrainer, SFTConfig
 # Verificar CUDA disponible
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f">> Device detectado: {device}")
-print(f">> GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
+if torch.cuda.is_available():
+    print(f">> GPU: {torch.cuda.get_device_name(0)}")
+    print(f">> VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
 
-MODEL_ID = "gpt2"  # Modelo base ligero
+# Usar modelo mediano aprovechando 16GB VRAM de RTX 4060 Ti
+MODEL_ID = "microsoft/DialoGPT-medium"  # O "microsoft/DialoGPT-large" 
 DATA_PATH = "data/instructions.jsonl"
 OUT_DIR = "models/out-tinyllama-lora"
 
@@ -230,13 +268,16 @@ tok = AutoTokenizer.from_pretrained(MODEL_ID)
 if tok.pad_token is None:
     tok.pad_token = tok.eos_token
 
-model = AutoModelForCausalLM.from_pretrained(MODEL_ID)
-model.to(device)
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_ID,
+    torch_dtype=torch.float16,  # Usar FP16 para ahorrar VRAM
+    device_map="auto",          # Distribución automática
+)
 
-# Configuración LoRA optimizada para GPU NVIDIA
+# Configuración LoRA optimizada para RTX 4060 Ti
 peft_cfg = LoraConfig(
     r=32, lora_alpha=32, lora_dropout=0.05,
-    target_modules=["c_attn"],  # target modules para GPT-2
+    target_modules=["c_attn"],  # Ajustar según el modelo
     bias="none", task_type="CAUSAL_LM",
 )
 
@@ -250,22 +291,25 @@ def format_example(ex):
 
 ds = ds.map(format_example, remove_columns=ds.column_names)
 
-# Configuración optimizada para GPU CUDA
+# Configuración optimizada para RTX 4060 Ti (16GB VRAM)
 sft_args = SFTConfig(
     output_dir=OUT_DIR,
-    per_device_train_batch_size=4,  # Más alto para GPU
+    per_device_train_batch_size=6,  # Ajustado para RTX 4060 Ti
     gradient_accumulation_steps=4,
     learning_rate=2e-4,
     num_train_epochs=3,
     logging_steps=10,
-    save_steps=200,
+    save_steps=500,
     eval_strategy="no",
-    max_seq_length=1024,  # Más largo para GPU
+    max_seq_length=2048,  # Aprovecha 16GB VRAM
     packing=True,
     warmup_ratio=0.03,
-    dataloader_pin_memory=True,  # Optimización para GPU
+    dataloader_pin_memory=True,
     report_to="tensorboard",
     logging_dir="logs",
+    bf16=False,  # RTX 4060 Ti funciona mejor con FP16
+    tf32=True,   # TensorFloat-32 habilitado
+    dataloader_num_workers=2,  # Optimizado para RTX 4060 Ti
 )
 
 trainer = SFTTrainer(
@@ -284,7 +328,7 @@ print("✅ Adaptador LoRA guardado en:", OUT_DIR)
 print("✅ Logs disponibles en:", "logs/")
 ```
 
-### Script de Inferencia
+### Script de Inferencia (Optimizado para RTX 4060 Ti)
 
 ```python
 # scripts/inference_lora.py
@@ -296,7 +340,7 @@ from peft import PeftModel
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f">> Device detectado: {device}")
 
-BASE = "gpt2"
+BASE = "microsoft/DialoGPT-medium"
 ADAPTER = "models/out-tinyllama-lora"
 
 # Cargar tokenizer
@@ -305,8 +349,11 @@ if tok.pad_token is None:
     tok.pad_token = tok.eos_token
 
 # Cargar modelo base + LoRA
-base = AutoModelForCausalLM.from_pretrained(BASE)
-base = base.to(device)
+base = AutoModelForCausalLM.from_pretrained(
+    BASE,
+    torch_dtype=torch.float16,
+    device_map="auto"
+)
 model = PeftModel.from_pretrained(base, ADAPTER)
 model.eval()
 
@@ -316,16 +363,16 @@ def chat(user, system="Eres un asistente profesional y conciso."):
     
     gen = model.generate(
         **ids, 
-        max_new_tokens=300,
+        max_new_tokens=400,  # Optimizado para RTX 4060 Ti
         do_sample=True, 
-        top_p=0.9, 
+        top_p=0.95, 
         temperature=0.7,
         pad_token_id=tok.eos_token_id,
-        eos_token_id=tok.eos_token_id
+        eos_token_id=tok.eos_token_id,
+        use_cache=True  # Optimización para RTX 4060 Ti
     )
     
     response = tok.decode(gen[0], skip_special_tokens=True)
-    # Extraer solo la respuesta del assistant
     if "Assistant:" in response:
         response = response.split("Assistant:")[1].strip()
     
@@ -333,7 +380,7 @@ def chat(user, system="Eres un asistente profesional y conciso."):
     return response
 
 if __name__ == "__main__":
-    print("=== CHAT CON MODELO FINE-TUNED ===")
+    print("=== CHAT CON MODELO FINE-TUNED (RTX 4060 Ti) ===")
     test_query = "Dame un checklist de conciliación de pagos de los lunes."
     print(f"Usuario: {test_query}")
     chat(test_query)
@@ -420,37 +467,40 @@ watch -n 1 nvidia-smi
 tail -f logs/events.out.tfevents.*
 ```
 
-### Optimizaciones para GPU
+### Optimizaciones para RTX 4060 Ti
 
 ```python
-# Configuraciones recomendadas por VRAM:
+# Configuraciones por modelo para RTX 4060 Ti (16GB VRAM):
 
-# GPU con 6GB VRAM
+# Modelo pequeño (GPT-2, DialoGPT-medium)
+per_device_train_batch_size=8
+gradient_accumulation_steps=4
+max_seq_length=2048
+
+# Modelo mediano (DialoGPT-large, TinyLlama-1.1B)
+per_device_train_batch_size=4
+gradient_accumulation_steps=6
+max_seq_length=2048
+
+# Modelo grande (Llama 2 7B con LoRA)
 per_device_train_batch_size=2
 gradient_accumulation_steps=8
-max_seq_length=512
-
-# GPU con 8GB VRAM  
-per_device_train_batch_size=4
-gradient_accumulation_steps=4
 max_seq_length=1024
-
-# GPU con 12GB+ VRAM
-per_device_train_batch_size=8
-gradient_accumulation_steps=2
-max_seq_length=2048
 ```
 
-### Test de Rendimiento
+### Test de Rendimiento RTX 4060 Ti
 
 ```bash
-# Test de velocidad de entrenamiento
+# Test de velocidad RTX 4060 Ti
 python -c "
 import torch, time
 if torch.cuda.is_available():
-    print('Testing GPU performance...')
-    x = torch.randn(1000, 1000).cuda()
-    y = torch.randn(1000, 1000).cuda()
+    print('=== RTX 4060 Ti Performance Test ===')
+    
+    # Test 1: Matrices medianas (apropiadas para RTX 4060 Ti)
+    size = 3000  # Tamaño moderado para RTX 4060 Ti
+    x = torch.randn(size, size).cuda()
+    y = torch.randn(size, size).cuda()
     
     # Warm-up
     for _ in range(10):
@@ -464,119 +514,144 @@ if torch.cuda.is_available():
         torch.cuda.synchronize()
     end = time.time()
     
-    print(f'Average time: {(end-start)/100*1000:.2f}ms per multiplication')
+    print(f'Matrix multiplication ({size}x{size}): {(end-start)/100*1000:.2f}ms')
     print(f'GPU: {torch.cuda.get_device_name(0)}')
+    print(f'VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB')
+    print(f'Memoria libre: {torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated() / 1e9:.1f}GB')
+    
+    # Test 2: Atención multi-head
+    batch_size, seq_len, hidden_dim = 6, 2048, 768  # Ajustado para RTX 4060 Ti
+    query = torch.randn(batch_size, seq_len, hidden_dim).cuda()
+    key = torch.randn(batch_size, seq_len, hidden_dim).cuda()
+    value = torch.randn(batch_size, seq_len, hidden_dim).cuda()
+    
+    start = time.time()
+    for _ in range(50):
+        # Simular atención multi-head
+        attn_output = torch.nn.functional.scaled_dot_product_attention(query, key, value)
+        torch.cuda.synchronize()
+    end = time.time()
+    
+    print(f'Attention computation: {(end-start)/50*1000:.2f}ms')
+    
 else:
     print('CUDA no disponible')
 "
 ```
 
-⸻
+### Monitoreo en Tiempo Real para RTX 4060 Ti
 
-## 🛠️ SOLUCIÓN DE PROBLEMAS
-
-### Problemas Comunes
-
-**❌ "NVIDIA-SMI not found"**
 ```bash
-# Reinstalar driver
-sudo apt install nvidia-driver-535
-sudo reboot
+# Verificar uso específico de RTX 4060 Ti
+watch -n 1 nvidia-smi
+
+# Monitorear temperaturas (RTX 4060 Ti es más eficiente térmicamente)
+nvidia-smi -l 1 -q -d TEMPERATURE
+
+# Verificar frecuencia de GPU
+watch -n 1 nvidia-smi --query-gpu=clocks.gr,power.draw,memory.used,memory.total --format=csv
+
+# Monitorear uso de CUDA
+nvidia-smi -l 1 --query-compute-apps=pid,used_memory,compute_mode --format=csv
 ```
 
-**❌ "CUDA not found"**
-```bash
-# Verificar instalación
-ls /usr/local/cuda*
-# Reinstalar si es necesario
-sudo apt install cuda-toolkit-12-1
-```
-
-**❌ "Permission denied" en GPU**
-```bash
-# Verificar permisos
-ls -l /dev/nvidia*
-# Agregar usuario a grupos
-sudo usermod -a -G video $USER
-sudo usermod -a -G render $USER
-# Reiniciar sesión
-```
-
-**❌ "Out of Memory" durante training**
-```bash
-# Verificar memoria GPU
-nvidia-smi -l 1
-# Reducir batch size en el script
-```
-
-**❌ "Module not found" errores**
-```bash
-# Recrear virtualenv
-rm -rf .venv
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install transformers==4.25.1 datasets==2.13.2 peft==0.3.0 accelerate==0.20.3 trl==0.7.4 sentencepiece safetensors
-```
-
-### Comandos de Diagnóstico
+### Script de Diagnóstico para RTX 4060 Ti
 
 ```bash
 #!/bin/bash
-# diagnostics.sh - Script de diagnóstico completo
+# diagnostics_rtx4060ti.sh
 
-echo "=== INFORMACIÓN DEL SISTEMA ==="
+echo "=== RTX 4060 Ti DIAGNOSTIC ==="
+echo "Fecha: $(date)"
+echo "Usuario: $(whoami)"
+
+echo -e "\n=== INFORMACIÓN DEL SISTEMA ==="
 lsb_release -a
 uname -r
+lscpu | grep "Model name"
 
-echo -e "\n=== GPU NVIDIA ==="
+echo -e "\n=== GPU NVIDIA RTX 4060 Ti ==="
+nvidia-smi -L
 nvidia-smi
-
-echo -e "\n=== CUDA ==="
-nvcc --version
-echo $PATH | grep cuda
-echo $LD_LIBRARY_PATH | grep cuda
-
-echo -e "\n=== PYTHON ENVIRONMENT ==="
-which python
-python --version
-which pip
-pip --version
+nvidia-smi --query-gpu=name,memory.total,driver_version,cuda_version --format=csv
 
 echo -e "\n=== TEST DE PYTORCH CON CUDA ==="
 python -c "
 import torch
 print(f'PyTorch: {torch.__version__}')
 print(f'CUDA: {torch.cuda.is_available()}')
+print(f'Versión CUDA: {torch.version.cuda}')
 if torch.cuda.is_available():
     print(f'GPU: {torch.cuda.get_device_name(0)}')
-    print(f'VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB')
+    print(f'VRAM Total: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB')
+    print(f'VRAM Libre: {torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated() / 1e9:.1f}GB')
+    print(f'Multi-Processor Count: {torch.cuda.get_device_properties(0).multi_processor_count}')
+    print(f'Compute Capability: {torch.cuda.get_device_properties(0).major}.{torch.cuda.get_device_properties(0).minor}')
+"
+
+echo -e "\n=== TEST DE MEMORIA RTX 4060 Ti ==="
+python -c "
+import torch
+if torch.cuda.is_available():
+    # Test de memoria moderado para RTX 4060 Ti
+    try:
+        test_size = 4 * 1024  # 4GB test
+        x = torch.randn(test_size, test_size).cuda()
+        print(f'✅ Test de 4GB exitoso')
+        del x
+        torch.cuda.empty_cache()
+        
+        # Test de 8GB
+        test_size = 6 * 1024  # 6GB test
+        x = torch.randn(test_size, test_size).cuda()
+        print(f'✅ Test de 6GB exitoso')
+        del x
+        
+        # Test de 12GB (usando majority de 16GB VRAM)
+        test_size = 8 * 1024  # 8GB test
+        x = torch.randn(test_size, test_size).cuda()
+        print(f'✅ Test de 8GB exitoso')
+        del x
+        
+    except RuntimeError as e:
+        print(f'❌ Error de memoria: {e}')
+"
+
+echo -e "\n=== VERIFICACIÓN DE MÓDULOS ==="
+source .venv/bin/activate
+python -c "
+import sys
+modules = ['torch', 'transformers', 'datasets', 'peft', 'accelerate', 'trl', 'sentencepiece', 'safetensors']
+for module in modules:
+    try:
+        exec(f'import {module}')
+        print(f'✅ {module} disponible')
+    except ImportError as e:
+        print(f'❌ {module}: {e}')
 "
 ```
 
-⸻
+### Comandos Específicos para RTX 4060 Ti
 
-## 🎯 PRÓXIMOS PASOS
+```bash
+# Configurar TensorFloat-32 para mejor rendimiento
+export NV_TENSORRT_FP16_ENABLE=1
+export NV_TENSORRT_INT8_ENABLE=1
+export CUDA_TF32_NBLOCK=1
 
-### Para Adaptar a tu Dominio
+# Optimizar variables del sistema
+echo 'export CUDA_CACHE_MAXSIZE=2147483648' >> ~/.bashrc
+echo 'export TORCH_CUDNN_V8_API_ENABLED=1' >> ~/.bashrc
+source ~/.bashrc
 
-1. **Preparar tu Dataset**: Convierte tu documentación/procedimientos a formato JSONL:
-   ```json
-   {"system": "Tus instrucciones de sistema", "input": "Pregunta frecuente", "output": "Respuesta esperada"}
-   ```
+# Verificar optimizaciones aplicadas
+python -c "
+import torch
+print(f'CuDNN version: {torch.backends.cudnn.version()}')
+print(f'CuDNN enabled: {torch.backends.cudnn.enabled}')
+print(f'TF32 habilitado: {torch.backends.cudnn.allow_tf32}')
+print(f'Matmul TF32: {torch.backends.cuda.matmul.allow_tf32}')
+"
+```
 
-2. **Entrenar con tus Datos**: Reemplaza `data/instructions.jsonl` y ejecuta el fine-tuning
-
-3. **Evaluar Resultados**: Prueba el modelo con casos reales de tu dominio
-
-4. **Optimizar**: Ajusta hiperparámetros según resultados
-
-### Para Producción
-
-- **Quantización**: Usa `bitsandbytes` para modelos más pequeños
-- **Servidor de Inferencia**: Implementa con FastAPI + CUDA
-- **Monitoreo**: Logs de TensorBoard para seguimiento
-- **Backup**: Guarda checkpoints intermedios
-
-¡Listo! Tienes un sistema completo de fine-tuning optimizado para Ubuntu + GPU NVIDIA. 🚀
+¡Listo! Tienes un sistema completo de fine-tuning optimizado para Ubuntu + RTX 4060 Ti (16GB VRAM). 🚀
