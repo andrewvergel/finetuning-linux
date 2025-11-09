@@ -1,0 +1,290 @@
+# ================================
+# PYTHON & VIRTUAL ENVIRONMENTS
+# ================================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+env/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ================================
+# MACHINE LEARNING / MODELS
+# ================================
+# Model checkpoints (too large for git)
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.pkl
+*.pickle
+
+# Hugging Face model cache
+.cache/
+.huggingface/
+
+# Model outputs (usually large)
+out-*/
+models/out-*/
+merged-*/
+checkpoints/
+runs/
+experiments/
+logs/
+
+# Training artifacts
+events.out.tfevents.*
+wandb/
+mlruns/
+.tensorboard/
+
+# ================================
+# DATASETS & DATA
+# ================================
+# Large dataset files
+data/*.json
+data/*.jsonl
+data/*.csv
+data/*.parquet
+data/*.feather
+data/*.h5
+data/*.hdf5
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Raw data (may contain sensitive info)
+raw/
+processed/
+features/
+
+# ================================
+# JUPYTER NOTEBOOKS
+# ================================
+.ipynb_checkpoints
+*.ipynb
+
+# ================================
+# IDE & EDITORS
+# ================================
+# VS Code
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# ================================
+# OPERATING SYSTEM
+# ================================
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Linux
+*~
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ================================
+# DOCKER & CONTAINERS
+# ================================
+Dockerfile.local
+docker-compose.override.yml
+.dockerignore
+
+# ================================
+# DEVELOPMENT & TESTING
+# ================================
+# Coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# ================================
+# ENVIRONMENT VARIABLES
+# ================================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ================================
+# TEMPORARY FILES
+# ================================
+*.tmp
+*.temp
+*.log
+*.out
+*.err
+*.pid
+*.seed
+*.pid.lock
+
+# ================================
+# CUDA & GPU RELATED
+# ================================
+# CUDA cache
+.cu_cache/
+
+# GPU memory dumps
+*.gmem
+
+# ================================
+# MONITORING & ANALYTICS
+# ================================
+# Weights & Biases
+wandb/
+
+# TensorBoard logs (can be regenerated)
+tensorboard_logs/
+
+# ================================
+# LARGE FILES & MEDIA
+# ================================
+# Images, videos, audio
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.svg
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.mp3
+*.wav
+*.flac
+*.aac
+
+# Documents that might be large
+*.pdf
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+
+# ================================
+# ARCHIVES & COMPRESSED
+# ================================
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# ================================
+# SECURITY & KEYS
+# ================================
+# API keys, tokens, certificates
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials/
+tokens/
+
+# ================================
+# PROJECT SPECIFIC
+# ================================
+# Local configurations
+config.local.*
+settings.local.*
+
+# Custom scripts that might contain sensitive data
+scripts/private/
+scripts/local/
+
+# Local data directories
+local_data/
+user_data/
+
+# ================================
+# GIT LFS (for large model files)
+# ================================
+# Uncomment if you want to use Git LFS for model files
+# *.bin filter=lfs diff=lfs merge=lfs -text
+# *.pt filter=lfs diff=lfs merge=lfs -text
+# *.ckpt filter=lfs diff=lfs merge=lfs -text
+# *.h5 filter=lfs diff=lfs merge=lfs -text
+# *.onnx filter=lfs diff=lfs merge=lfs -text
