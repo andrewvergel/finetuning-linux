@@ -11,7 +11,7 @@
 ## 🧱 Arquitectura y Flujo
 1. **Bootstrap de entorno** – instalación de drivers, CUDA y dependencias en un equipo limpio.
 2. **Dataset JSONL** – prompts internos versionados en `data/instructions.jsonl`.
-3. **Script de entrenamiento** – `scripts/finetune_lora.py` (v1.0.9) realiza duplicación inteligente del dataset y ajusta hiperparámetros para escenarios de pocos datos.
+3. **Script de entrenamiento** – `scripts/finetune_lora.py` (v1.1.0) realiza duplicación inteligente del dataset y ajusta hiperparámetros para escenarios de pocos datos.
 4. **Inferencia controlada** – `scripts/inference_lora.py` (v1.0.2) con decodificación determinista para evaluar resultados.
 5. **Reportes** – se genera `training_info.json` con metadatos del entrenamiento.
 
@@ -47,9 +47,9 @@ JSONL
 > ℹ️ `data/instructions.jsonl` **ya viene versionado en este repositorio** y es el único archivo permitido dentro de `data/`. El script de entrenamiento duplica automáticamente el dataset si detecta menos de 200 muestras, pero se recomienda ampliarlo manualmente con más casuísticas para mejorar la diversidad de respuestas.
 
 ## 🛠️ Script de Entrenamiento (`scripts/finetune_lora.py`)
-- Basado en LoRA con rank 32 sobre las capas `c_attn` y `c_proj` de DialoGPT-medium.
-- Duplica datasets pequeños para asegurar convergencia.
-- Hiperparámetros ajustados a escenarios low-data: batch 2, 30 épocas, scheduler `cosine`, warmup 5%.
+- Basado en LoRA (r=16) sobre las capas `c_attn` y `c_proj` de DialoGPT-medium.
+- Duplica datasets pequeños hasta ~120 ejemplos para acelerar las iteraciones.
+- Entrenamiento balanceado para escenarios low-data: batch 4, 15 épocas, scheduler `constant_with_warmup`.
 - Genera un `training_info.json` con métricas básicas y contexto de hardware.
 
 ## 💬 Script de Inferencia (`scripts/inference_lora.py`)
@@ -74,7 +74,7 @@ finetuning-linux/
 │   └── instructions.jsonl           # Dataset versionado
 ├── models/                          # Salidas de entrenamiento (ignorado en git)
 ├── scripts/
-│   ├── finetune_lora.py             # Entrenamiento LoRA (v1.0.9)
+│   ├── finetune_lora.py             # Entrenamiento LoRA (v1.1.0)
 │   ├── inference_lora.py            # Inferencia determinista (v1.0.2)
 │   └── validate_environment.py      # Checklist opcional de diagnóstico
 ├── .gitignore

@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """
 LoRA Fine-tuning Script for RTX 4060 Ti
-Version: 1.0.9
+Version: 1.1.1
 Author: Auto-generated from INSTRUCTIONS.md
 Optimized for: RTX 4060 Ti (16GB VRAM)
 
 Changelog:
+- v1.1.1: Expose training hyperparameters as module-level constants for easy tuning
+- v1.1.0: Faster training loop (less repetition, bigger batches, fewer epochs, LoRA r=16)
 - v1.0.9: Repeat tiny datasets and widen LoRA target modules for better learning
 - v1.0.8: Tune hyperparameters for tiny datasets (more epochs, smaller batches)
 - v1.0.7: Use dataset_text_field pipeline to avoid tokenizer batch errors
 """
 
 import os
+import math
 import torch
 import json
 from datetime import datetime
@@ -21,8 +24,36 @@ from peft import LoraConfig, get_peft_model
 from trl import SFTTrainer
 
 # Version information
-SCRIPT_VERSION = "1.0.9"
+SCRIPT_VERSION = "1.1.1"
 SCRIPT_NAME = "finetune_lora.py"
+
+# ======== Tunable Hyperparameters ========
+MODEL_ID = "microsoft/DialoGPT-medium"
+DATA_PATH = "data/instructions.jsonl"
+OUT_DIR = "models/out-tinyllama-lora"
+
+# Dataset expansion & batching
+DATASET_MIN_EXAMPLES = 120
+PER_DEVICE_BATCH_SIZE = 4
+GRADIENT_ACCUMULATION = 1
+
+# Training schedule
+NUM_EPOCHS = 15
+LEARNING_RATE = 2e-4
+WARMUP_RATIO = 0.03
+LR_SCHEDULER = "constant_with_warmup"
+WEIGHT_DECAY = 0.0
+
+# LoRA configuration
+LORA_RANK = 16
+LORA_ALPHA = 16
+LORA_DROPOUT = 0.05
+LORA_TARGET_MODULES = ["c_attn", "c_proj"]
+
+# Misc
+LOGGING_STEPS = 5
+SAVE_STEPS = 100
+DATASET_SHUFFLE_SEED = 42
 
 def log_version_info():
     """Log script version and system information"""
@@ -57,9 +88,6 @@ def main():
         print(f">> VRAM: {vram_gb:.1f}GB")
     
     # Model and paths
-    MODEL_ID = "microsoft/DialoGPT-medium"  # Optimized for RTX 4060 Ti
-    DATA_PATH = "data/instructions.jsonl"
-    OUT_DIR = "models/out-tinyllama-lora"
     
     # Check if data exists
     if not os.path.exists(DATA_PATH):
@@ -102,9 +130,12 @@ def main():
     
     # Configuración LoRA optimizada para RTX 4060 Ti
     peft_cfg = LoraConfig(
-        r=32, lora_alpha=32, lora_dropout=0.05,
-        target_modules=["c_attn", "c_proj"],
-        bias="none", task_type="CAUSAL_LM",
+        r=LORA_RANK,
+        lora_alpha=LORA_ALPHA,
+        lora_dropout=LORA_DROPOUT,
+        target_modules=LORA_TARGET_MODULES,
+        bias="none",
+        task_type="CAUSAL_LM",
     )
     print(">> LoRA configuration set")
     
@@ -120,24 +151,24 @@ def main():
     print(">> Formatting examples...")
     ds = ds.map(format_example, remove_columns=ds.column_names)
 
-    if len(ds) < 200:
-        repeat_factor = max(1, 200 // len(ds))
-        ds = concatenate_datasets([ds] * repeat_factor).shuffle(seed=42)
+    if len(ds) < DATASET_MIN_EXAMPLES:
+        repeat_factor = max(1, math.ceil(DATASET_MIN_EXAMPLES / len(ds)))
+        ds = concatenate_datasets([ds] * repeat_factor).shuffle(seed=DATASET_SHUFFLE_SEED)
         print(f">> Dataset expanded via repetition: {repeat_factor}x -> {len(ds)} samples")
     
     # Configuración optimizada para RTX 4060 Ti (16GB VRAM)
     sft_args = TrainingArguments(
         output_dir=OUT_DIR,
-        per_device_train_batch_size=2,  # Smaller batch for tiny dataset
-        gradient_accumulation_steps=1,
-        learning_rate=2e-4,
-        num_train_epochs=30,
-        logging_steps=5,
-        save_steps=100,
+        per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
+        gradient_accumulation_steps=GRADIENT_ACCUMULATION,
+        learning_rate=LEARNING_RATE,
+        num_train_epochs=NUM_EPOCHS,
+        logging_steps=LOGGING_STEPS,
+        save_steps=SAVE_STEPS,
         evaluation_strategy="no",
-        warmup_ratio=0.05,
-        lr_scheduler_type="cosine",
-        weight_decay=0.0,
+        warmup_ratio=WARMUP_RATIO,
+        lr_scheduler_type=LR_SCHEDULER,
+        weight_decay=WEIGHT_DECAY,
         dataloader_pin_memory=True,
         report_to="tensorboard",
         logging_dir="logs",
@@ -176,6 +207,7 @@ def main():
     print(f"   - Gradient accumulation: {sft_args.gradient_accumulation_steps}")
     print(f"   - Max sequence length: {max_seq_len}")
     print(f"   - Training epochs: {sft_args.num_train_epochs}")
+    print(f"   - Total training examples (after repeat): {len(ds)}")
     
     trainer.train()
     
