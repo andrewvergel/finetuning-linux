@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 LoRA Fine-tuning Script for RTX 4060 Ti
-Version: 1.0.0
+Version: 1.0.1
 Author: Auto-generated from INSTRUCTIONS.md
 Optimized for: RTX 4060 Ti (16GB VRAM)
 
 Changelog:
+- v1.0.1: Fixed TRL compatibility for v0.7.4, added TF32 support
 - v1.0.0: Initial version with RTX 4060 Ti optimization
 """
 
@@ -19,7 +20,7 @@ from peft import LoraConfig, get_peft_model
 from trl import SFTTrainer
 
 # Version information
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_VERSION = "1.0.1"
 SCRIPT_NAME = "finetune_lora.py"
 
 def log_version_info():
@@ -123,7 +124,8 @@ def main():
         logging_dir="logs",
         fp16=True,  # Changed from bf16=False to fp16=True
         dataloader_num_workers=2,  # Optimized for RTX 4060 Ti
-        # Removed invalid parameters: max_seq_length, packing, tf32
+        tf32=True,  # Added TF32 support
+        # Removed invalid parameters: max_seq_length, packing
     )
     print(">> Training configuration set")
     

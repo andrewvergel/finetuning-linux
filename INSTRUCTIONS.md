@@ -190,6 +190,40 @@ pip install tqdm tensorboard
 
 ### 🔧 SOLUCIÓN A ERRORES DE COMPATIBILIDAD
 
+**🚀 SOLUCIÓN RÁPIDA PROBADA (Si tienes conflictos de versiones):**
+
+```bash
+# Desinstalar todo
+pip uninstall -y numpy pyarrow pandas transformers datasets peft accelerate trl
+
+# Instalar en orden exacto
+pip install "numpy<2.0"
+pip install pyarrow==14.0.1
+pip install pandas==2.0.3
+pip install transformers==4.35.2
+pip install datasets==2.14.6
+pip install peft==0.6.0
+pip install accelerate==0.24.1
+pip install trl==0.7.4
+
+# Verificar que funciona
+python -c "
+import numpy as np
+print(f'NumPy version: {np.__version__}')
+import pyarrow
+print(f'PyArrow version: {pyarrow.__version__}')
+import datasets
+print('✅ Todas las librerías compatibles')
+"
+```
+
+**✅ RESULTADO ESPERADO:**
+```
+NumPy version: 1.26.4
+PyArrow version: 14.0.1
+✅ Todas las librerías compatibles
+```
+
 **❌ PROBLEMA REAL: NumPy 2.x Incompatibilidad**
 
 ```bash
@@ -251,8 +285,16 @@ pip install transformers==4.35.2
 pip install datasets==2.14.6
 pip install peft==0.6.0
 pip install accelerate==0.24.1
-pip install trl==0.7.6
+pip install trl==0.7.4
 ```
+
+**✅ COMBINACIÓN DE VERSIONES PROBADA Y FUNCIONANDO:**
+```bash
+NumPy version: 1.26.4
+PyArrow version: 14.0.1
+datasets: 2.14.6
+```
+**Esta combinación ha sido probada y funciona sin conflictos.**
 
 **Error alternativo de dependencias de CUDA:**
 
