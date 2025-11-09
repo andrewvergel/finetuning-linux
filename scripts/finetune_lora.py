@@ -1,33 +1,27 @@
 #!/usr/bin/env python3
 """
 LoRA Fine-tuning Script for RTX 4060 Ti
-Version: 1.0.8
+Version: 1.0.9
 Author: Auto-generated from INSTRUCTIONS.md
 Optimized for: RTX 4060 Ti (16GB VRAM)
 
 Changelog:
+- v1.0.9: Repeat tiny datasets and widen LoRA target modules for better learning
 - v1.0.8: Tune hyperparameters for tiny datasets (more epochs, smaller batches)
 - v1.0.7: Use dataset_text_field pipeline to avoid tokenizer batch errors
-- v1.0.6: Fix formatting pipeline to provide proper text batches to SFTTrainer
-- v1.0.5: Align max sequence length with model limits, guard packing for small contexts
-- v1.0.4: Enhanced training parameters for larger datasets, improved stability
-- v1.0.3: Fixed max_seq_length access error in training info display
-- v1.0.2: Fixed packing for small datasets (disable packing if < 10 examples)
-- v1.0.1: Fixed TRL compatibility for v0.7.4, added TF32 support
-- v1.0.0: Initial version with RTX 4060 Ti optimization
 """
 
 import os
 import torch
 import json
 from datetime import datetime
-from datasets import load_dataset
+from datasets import load_dataset, concatenate_datasets
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
 from peft import LoraConfig, get_peft_model
 from trl import SFTTrainer
 
 # Version information
-SCRIPT_VERSION = "1.0.8"
+SCRIPT_VERSION = "1.0.9"
 SCRIPT_NAME = "finetune_lora.py"
 
 def log_version_info():
@@ -109,7 +103,7 @@ def main():
     # Configuración LoRA optimizada para RTX 4060 Ti
     peft_cfg = LoraConfig(
         r=32, lora_alpha=32, lora_dropout=0.05,
-        target_modules=["c_attn"],  # Adjust according to model
+        target_modules=["c_attn", "c_proj"],
         bias="none", task_type="CAUSAL_LM",
     )
     print(">> LoRA configuration set")
@@ -125,6 +119,11 @@ def main():
     
     print(">> Formatting examples...")
     ds = ds.map(format_example, remove_columns=ds.column_names)
+
+    if len(ds) < 200:
+        repeat_factor = max(1, 200 // len(ds))
+        ds = concatenate_datasets([ds] * repeat_factor).shuffle(seed=42)
+        print(f">> Dataset expanded via repetition: {repeat_factor}x -> {len(ds)} samples")
     
     # Configuración optimizada para RTX 4060 Ti (16GB VRAM)
     sft_args = TrainingArguments(
