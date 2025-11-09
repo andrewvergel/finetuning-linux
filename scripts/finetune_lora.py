@@ -37,7 +37,7 @@ from transformers import (
     EarlyStoppingCallback,
 )
 from peft import LoraConfig, get_peft_model
-from trl import SFTTrainer
+from trl import SFTTrainer, SFTConfig
 
 # Opcional: BitsAndBytes solo si QLoRA activado y lib disponible
 try:
@@ -184,14 +184,23 @@ def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # -------- Datos --------
+def validate_example(example: dict) -> bool:
+    """Valida que un ejemplo tenga la estructura correcta."""
+    required_fields = ["input", "output"]
+    return all(field in example and example[field].strip() for field in required_fields)
+
 def format_example(example, eos_token: str):
+    """Formatea un ejemplo para el entrenamiento."""
+    if not validate_example(example):
+        raise ValueError(f"Ejemplo inválido: {example}")
+        
     system_prompt = example.get("system", "Eres un asistente útil y conciso.")
     text = (
         f"System: {system_prompt}\n"
         f"User: {example['input']}\n"
         f"Assistant: {example['output']}{eos_token}"
     )
-    return {"text": text}
+    return {"text": text, "length": len(text)}
 
 def run_eval(model, tok, device, eval_prompts):
     if not eval_prompts:
@@ -359,17 +368,100 @@ def main():
         logging.warning("No se pudo habilitar gradient checkpointing: %s", e)
 
     # Dataset -> texto formateado + EOS
-    logging.info(">> Formatting examples...")
-    train_ds = train_raw.map(lambda ex: format_example(ex, EOS), remove_columns=train_raw.column_names)
-    eval_ds = eval_raw.map(lambda ex: format_example(ex, EOS), remove_columns=eval_raw.column_names)
-
-    # Expandir para pasos suficientes
+    logging.info(">> Formatting and validating examples...")
+    
+    def process_dataset(dataset, dataset_name="train"):
+        valid_examples = []
+        invalid_examples = 0
+        
+        for example in dataset:
+            try:
+                if validate_example(example):
+                    formatted = format_example(example, EOS)
+                    valid_examples.append(formatted)
+                else:
+                    invalid_examples += 1
+            except Exception as e:
+                logging.warning(f"Error procesando ejemplo en {dataset_name}: {e}")
+                invalid_examples += 1
+        
+        if invalid_examples > 0:
+            logging.warning("Se encontraron %d ejemplos inválidos en el dataset %s", 
+                          invalid_examples, dataset_name)
+        
+        return valid_examples
+    
+    # Procesar datasets de entrenamiento y validación
+    train_examples = process_dataset(train_raw, "train")
+    eval_examples = process_dataset(eval_raw, "eval")
+    
+    if not train_examples:
+        raise ValueError("No hay ejemplos válidos en el conjunto de entrenamiento")
+        
+    if not eval_examples and len(train_examples) > 10:
+        # Si no hay ejemplos de validación, dividir el train
+        train_examples, eval_examples = train_examples[:-5], train_examples[-5:]
+        logging.info("Usando últimos 5 ejemplos del train para validación")
+    
+    # Convertir a datasets de HF
+    train_ds = Dataset.from_list(train_examples)
+    eval_ds = Dataset.from_list(eval_examples) if eval_examples else None
+    
+    # Expandir dataset si es necesario
     if len(train_ds) < DATASET_MIN_EXAMPLES:
         repeat_factor = max(1, math.ceil(DATASET_MIN_EXAMPLES / len(train_ds)))
         train_ds = concatenate_datasets([train_ds] * repeat_factor).shuffle(seed=DATASET_SHUFFLE_SEED)
-        logging.info(">> Training dataset expanded via repetition: %dx -> %d samples", repeat_factor, len(train_ds))
+        logging.info(">> Training dataset expandido: %dx -> %d ejemplos", repeat_factor, len(train_ds))
 
     logging.info(">> Train samples: %d | Eval samples: %d", len(train_ds), len(eval_ds))
+
+    # Analizar estadísticas del dataset
+    sample_size = min(64, len(train_ds))
+    token_lengths = []
+    total_chars = 0
+    
+    for i in range(sample_size):
+        text = train_ds[i]["text"]
+        tokens = tok(text, return_tensors="pt", truncation=True, max_length=max_seq_len)
+        token_lengths.append(len(tokens["input_ids"][0]))
+        total_chars += len(text)
+    
+    stats = {
+        "avg_tokens": sum(token_lengths) / len(token_lengths) if token_lengths else 0,
+        "max_tokens": max(token_lengths) if token_lengths else 0,
+        "min_tokens": min(token_lengths) if token_lengths else 0,
+        "avg_chars": total_chars / sample_size if sample_size > 0 else 0,
+        "total_examples": len(train_ds)
+    }
+    
+    # Calcular tokens aproximados
+    approx_total_tokens = stats["avg_tokens"] * len(train_ds)
+    
+    # Decidir si usar packing
+    min_examples_for_packing = 64
+    min_tokens_for_packing = max_seq_len * 4
+    
+    use_packing = FORCE_PACKING
+    if FORCE_PACKING:
+        if len(train_ds) < min_examples_for_packing:
+            logging.warning("Packing forzado deshabilitado: dataset muy pequeño (%d < %d ejemplos)", 
+                          len(train_ds), min_examples_for_packing)
+            use_packing = False
+        elif approx_total_tokens < min_tokens_for_packing:
+            logging.warning("Packing forzado deshabilitado: tokens estimados insuficientes (%.0f < %d)", 
+                          approx_total_tokens, min_tokens_for_packing)
+            use_packing = False
+    
+    # Log de estadísticas
+    logging.info("📊 Estadísticas del dataset:")
+    logging.info(f"  - Ejemplos: {stats['total_examples']}")
+    logging.info(f"  - Tokens/ejemplo: {stats['avg_tokens']:.1f} (min: {stats['min_tokens']}, max: {stats['max_tokens']})")
+    logging.info(f"  - Caracteres/ejemplo: {stats['avg_chars']:.1f}")
+    logging.info(f"  - Tokens totales estimados: {approx_total_tokens:,.0f}")
+    logging.info(f"  - Packing: {'HABILITADO' if use_packing else 'DESHABILITADO'}")
+    
+    if stats['max_tokens'] > max_seq_len * 0.9:
+        logging.warning("¡Atención! Algunos ejemplos están cerca del límite de contexto (%d tokens)", max_seq_len)
 
     # Args de entrenamiento
     sft_args = TrainingArguments(
@@ -379,7 +471,7 @@ def main():
         learning_rate=LEARNING_RATE,
         num_train_epochs=NUM_EPOCHS,
         logging_steps=LOGGING_STEPS,
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         eval_steps=EVAL_STEPS,
         save_strategy=SAVE_STRATEGY,
         save_steps=SAVE_STEPS,
@@ -402,34 +494,117 @@ def main():
     )
     logging.info(">> Training configuration set")
 
-    # Trainer + EarlyStopping
-    trainer = SFTTrainer(
-        model=model,
-        tokenizer=tok,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        args=sft_args,
-        max_seq_length=max_seq_len,
-        packing=use_packing,
-        dataset_text_field="text",
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
-    )
+    # Configuración del entrenamiento
+    try:
+        # Configuración de SFT
+        sft_config = SFTConfig(
+            dataset_text_field="text",
+            max_seq_length=max_seq_len,
+            packing=use_packing,
+            neftune_noise_alpha=5.0,  # Mejora la generalización
+            dataset_num_proc=2,  # Procesamiento en paralelo
+        )
+        
+        # Callbacks
+        callbacks = [
+            EarlyStoppingCallback(
+                early_stopping_patience=3,  # Paciencia de 3 evaluaciones
+                early_stopping_threshold=0.01  # Mejora mínima requerida
+            )
+        ]
+
+        logging.info("🚀 Inicializando SFTTrainer...")
+        trainer = SFTTrainer(
+            model=model,
+            tokenizer=tok,
+            train_dataset=train_ds,
+            eval_dataset=eval_ds if eval_ds and len(eval_ds) > 0 else None,
+            args=sft_args,
+            config=sft_config,
+            callbacks=callbacks,
+        )
+        
+        # Validar configuración
+        if trainer.eval_dataset is None:
+            logging.warning("No hay dataset de validación. Se usará un subconjunto del entrenamiento.")
+            
+    except Exception as e:
+        logging.error("Error al inicializar el entrenador: %s", str(e))
+        # Intentar sin packing si falla
+        if use_packing:
+            logging.warning("Reintentando sin packing...")
+            sft_config.packing = False
+            trainer = SFTTrainer(
+                model=model,
+                tokenizer=tok,
+                train_dataset=train_ds,
+                eval_dataset=eval_ds if eval_ds and len(eval_ds) > 0 else None,
+                args=sft_args,
+                config=sft_config,
+                callbacks=callbacks,
+            )
+        else:
+            raise
     logging.info(">> Trainer initialized")
 
     os.makedirs(OUT_DIR, exist_ok=True)
     os.makedirs("logs", exist_ok=True)
 
-    logging.info(">> Starting training...")
-    logging.info("   - Batch size: %s", sft_args.per_device_train_batch_size)
-    logging.info("   - Grad accum: %s", sft_args.gradient_accumulation_steps)
-    logging.info("   - Max seq len: %d", max_seq_len)
-    logging.info("   - Epochs: %s", sft_args.num_train_epochs)
-    logging.info("   - Train (after repeat): %d | Eval: %d", len(train_ds), len(eval_ds))
+    # Resumen de la configuración
+    logging.info("\n" + "="*80)
+    logging.info("🚀 INICIANDO ENTRENAMIENTO")
+    logging.info("="*80)
+    logging.info("📋 Configuración:")
+    logging.info(f"   - Modelo: {MODEL_ID}")
+    logging.info(f"   - Batch size: {sft_args.per_device_train_batch_size} (x{sft_args.gradient_accumulation_steps})")
+    logging.info(f"   - Longitud máxima: {max_seq_len} tokens")
+    logging.info(f"   - Épocas: {sft_args.num_train_epochs}")
+    logging.info(f"   - Tamaño del dataset: {len(train_ds)} entrenamiento, {len(eval_ds) if eval_ds else 0} validación")
+    logging.info(f"   - Learning rate: {sft_args.learning_rate}")
+    logging.info(f"   - Peso de decaimiento: {sft_args.weight_decay}")
+    logging.info(f"   - LoRA r={LORA_RANK}, alpha={LORA_ALPHA}, dropout={LORA_DROPOUT}")
+    logging.info(f"   - QLoRA: {'Sí' if USE_QLORA else 'No'}")
+    logging.info(f"   - Packing: {'Sí' if use_packing else 'No'}")
+    logging.info("="*80 + "\n")
 
-    trainer.train()
-
-    eval_metrics = trainer.evaluate()
-    logging.info(">> Validation metrics: %s", json.dumps(eval_metrics, indent=2))
+    # Entrenamiento con manejo de errores
+    try:
+        logging.info("🏋️ Iniciando entrenamiento...")
+        train_result = trainer.train()
+        
+        # Guardar métricas de entrenamiento
+        metrics = train_result.metrics
+        metrics["train_samples"] = len(train_ds)
+        
+        # Evaluación final
+        eval_metrics = {}
+        if eval_ds and len(eval_ds) > 0:
+            logging.info("📊 Evaluando modelo final...")
+            eval_metrics = trainer.evaluate()
+            metrics.update({"eval_" + k: v for k, v in eval_metrics.items()})
+        
+        # Guardar métricas
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
+        
+        logging.info("✅ Entrenamiento completado con éxito!")
+        logging.info("📊 Métricas de evaluación:")
+        for k, v in eval_metrics.items():
+            logging.info(f"   - {k}: {v:.4f}")
+            
+    except RuntimeError as e:
+        if "out of memory" in str(e).lower():
+            logging.error("❌ Error: Memoria insuficiente. Intenta reducir el tamaño de batch o secuencia.")
+        raise
+    except Exception as e:
+        logging.error(f"❌ Error durante el entrenamiento: {str(e)}")
+        # Guardar el modelo a pesar del error si es posible
+        try:
+            trainer.save_model(OUT_DIR + "_crashed")
+            logging.info(f"Modelo guardado en {OUT_DIR}_crashed")
+        except:
+            pass
+        raise
 
     logging.info(">> Saving model (adapters + tokenizer)...")
     trainer.model.save_pretrained(OUT_DIR)
