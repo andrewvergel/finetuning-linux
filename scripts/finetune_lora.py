@@ -14,9 +14,9 @@ import torch
 import json
 from datetime import datetime
 from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, SFTConfig
 from peft import LoraConfig, get_peft_model
-from trl import SFTTrainer, SFTConfig
+from trl import SFTTrainer
 
 # Version information
 SCRIPT_VERSION = "1.0.0"
