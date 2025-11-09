@@ -51,10 +51,20 @@ JSONL
 - Basado en LoRA (r=32) sobre las capas `c_attn` y `c_proj` de DialoGPT-medium (ajustable por constantes).
 - El entrenamiento usa por defecto `data/instructions.jsonl` (puedes sobreescribirlo con la variable `FINETUNE_DATA_PATH`).
 - Duplica datasets pequeños hasta ~420 ejemplos solo sobre el split de entrenamiento.
-- Entrenamiento balanceado: batch efectivo 16 (4×4), 40 épocas, scheduler `cosine` (warmup 10%) y sin weight decay.
+- Entrenamiento balanceado: batch efectivo 8 (2×4), 28 épocas, scheduler `cosine` (warmup 12%) y sin weight decay.
 - Genera `training_info.json` con metadatos y deja un log detallado en `logs/debug_last_run.log`.
 - Reserva automáticamente 15% para validación, corre evaluación al final de cada época y guarda el mejor checkpoint según `eval_loss`.
 - Ejecuta una evaluación rápida al final tomando 10 ejemplos del split de validación (o un fallback predefinido) y deja la comparación esperada/obtenida en el log.
+
+### 📊 Guía rápida de hiperparámetros
+- `DATASET_MIN_EXAMPLES = 300` → número mínimo de muestras tras repetir el split de entrenamiento (ej.: con 60 instrucciones reales se repite 5× hasta ~300). *Subirlo* (360) suma iteraciones cuando la pérdida sigue bajando; *bajarlo* (200) sirve para smoke-tests o datasets más ricos.
+- `PER_DEVICE_BATCH_SIZE = 2` → muestras procesadas por GPU antes de acumular gradientes. Consume ~2 GB en la 4060 Ti, ideal para dejar memoria libre. *Subirlo* (4) mejora estabilidad si la VRAM lo permite; *bajarlo* (1) es la opción mínima para GPUs de 6 GB.
+- `GRADIENT_ACCUMULATION = 4` → número de pasos antes de aplicar actualización (batch efectivo = 2×4 = 8). *Subirlo* (6) suaviza gradientes ruidosos; *bajarlo* (2) es útil si notas overfitting rápido.
+- `NUM_EPOCHS = 28` → cada ejemplo se ve 28 veces tras repetición (~8 400 muestras). *Subirlo* (32) si la evaluación todavía mejora; *bajarlo* (20) cuando amplíes el dataset real.
+- `LEARNING_RATE = 4e-5` → velocidad de aprendizaje base (40 micro). Más bajo que el default, mitiga saltos en datasets repetidos. *Subirlo* (5e-5) si la pérdida se estanca; *bajarlo* (3e-5) cuando notas oscilaciones grandes en validación.
+- `WARMUP_RATIO = 0.12` → porcentaje inicial de pasos con LR creciente (primer ~1 000 pasos). *Subirlo* (0.15) si la pérdida inicial es inestable; *bajarlo* (0.08) cuando ya subiste el LR y quieres converger más rápido.
+- `LORA_DROPOUT = 0.15` → regularización sobre las capas adaptadas. *Subirlo* (0.2) si persisten respuestas repetitivas; *bajarlo* (0.1) cuando incorpores más datos variados.
+- `EVAL_SAMPLE_SIZE = 12` → cantidad de ejemplos del split de validación usados en la evaluación rápida. *Subirlo* (15) si agregas nuevas instrucciones y quieres más cobertura; *bajarlo* (8) para ejecuciones experimentales rápidas.
 
 ## 💬 Script de Inferencia (`scripts/inference_lora.py`)
 - Carga el adaptador LoRA desde `models/out-tinyllama-lora`.

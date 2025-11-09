@@ -35,21 +35,21 @@ DATA_PATH = os.getenv("FINETUNE_DATA_PATH", "data/instructions.jsonl")
 OUT_DIR = "models/out-tinyllama-lora"
 
 # Dataset expansion & batching
-DATASET_MIN_EXAMPLES = 420
-PER_DEVICE_BATCH_SIZE = 4
+DATASET_MIN_EXAMPLES = 300
+PER_DEVICE_BATCH_SIZE = 2
 GRADIENT_ACCUMULATION = 4
 
 # Training schedule
-NUM_EPOCHS = 40
-LEARNING_RATE = 6e-5
-WARMUP_RATIO = 0.1
+NUM_EPOCHS = 28
+LEARNING_RATE = 4e-5
+WARMUP_RATIO = 0.12
 LR_SCHEDULER = "cosine"
 WEIGHT_DECAY = 0.0
 
 # LoRA configuration
 LORA_RANK = 32
 LORA_ALPHA = 32
-LORA_DROPOUT = 0.1
+LORA_DROPOUT = 0.15
 LORA_TARGET_MODULES = ["c_attn", "c_proj"]
 
 # Misc
@@ -60,7 +60,7 @@ DATASET_SHUFFLE_SEED = 42
 VALIDATION_SPLIT = 0.15
 DEBUG_LOG_FILE = "debug_last_run.log"
 EVAL_MAX_NEW_TOKENS = 220
-EVAL_SAMPLE_SIZE = 10
+EVAL_SAMPLE_SIZE = 12
 EVAL_FALLBACK_PROMPTS = [
     {
         "system": "Eres un asistente experto en procesos internos.",
