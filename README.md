@@ -11,7 +11,7 @@
 ## 🧱 Arquitectura y Flujo
 1. **Bootstrap de entorno** – instalación de drivers, CUDA y dependencias en un equipo limpio.
 2. **Dataset JSONL** – prompts internos versionados en `data/instructions.jsonl`.
-3. **Script de entrenamiento** – `scripts/finetune_lora.py` (v1.1.0) realiza duplicación inteligente del dataset y ajusta hiperparámetros para escenarios de pocos datos.
+3. **Script de entrenamiento** – `scripts/finetune_lora.py` (v1.1.1) realiza duplicación inteligente del dataset y ajusta hiperparámetros para escenarios de pocos datos.
 4. **Inferencia controlada** – `scripts/inference_lora.py` (v1.0.2) con decodificación determinista para evaluar resultados.
 5. **Reportes** – se genera `training_info.json` con metadatos del entrenamiento.
 
@@ -34,6 +34,7 @@ pip install -r requirements.txt
 > 💡 Si partes de un servidor recién formateado, instala previamente los drivers NVIDIA, CUDA 12.1 y utilidades del sistema (detallado en secciones posteriores del repositorio original).
 > 📦 `requirements.txt` incluye todas las librerías auxiliares; aun así, instalamos `numpy<2.0` y `pyarrow==14.0.1` antes para evitar conflictos conocidos con `datasets` (error `PyExtensionType`).
 > 🔍 Antes de entrenar, puedes ejecutar `python scripts/validate_environment.py` para verificar versiones de Python, CUDA, VRAM disponible, dataset y dependencias.
+> 🧾 Cada entrenamiento deja un log detallado en `logs/debug_last_run.log` con métricas y respuestas de validación automática.
 
 ## 📚 Dataset de Instrucciones
 ```bash
@@ -47,10 +48,11 @@ JSONL
 > ℹ️ `data/instructions.jsonl` **ya viene versionado en este repositorio** y es el único archivo permitido dentro de `data/`. El script de entrenamiento duplica automáticamente el dataset si detecta menos de 200 muestras, pero se recomienda ampliarlo manualmente con más casuísticas para mejorar la diversidad de respuestas.
 
 ## 🛠️ Script de Entrenamiento (`scripts/finetune_lora.py`)
-- Basado en LoRA (r=16) sobre las capas `c_attn` y `c_proj` de DialoGPT-medium.
-- Duplica datasets pequeños hasta ~120 ejemplos para acelerar las iteraciones.
-- Entrenamiento balanceado para escenarios low-data: batch 4, 15 épocas, scheduler `constant_with_warmup`.
-- Genera un `training_info.json` con métricas básicas y contexto de hardware.
+- Basado en LoRA (r=32) sobre las capas `c_attn` y `c_proj` de DialoGPT-medium (ajustable por constantes).
+- Duplica datasets pequeños hasta ~160 ejemplos para acelerar convergencia sin sobre-entrenar.
+- Entrenamiento balanceado: batch efectivo 8 (4×2), 20 épocas, scheduler `cosine` con warmup 4%.
+- Genera `training_info.json` con metadatos y deja un log detallado en `logs/debug_last_run.log`.
+- Ejecuta una evaluación rápida al final con varios prompts de verificación.
 
 ## 💬 Script de Inferencia (`scripts/inference_lora.py`)
 - Carga el adaptador LoRA desde `models/out-tinyllama-lora`.
@@ -74,37 +76,9 @@ finetuning-linux/
 │   └── instructions.jsonl           # Dataset versionado
 ├── models/                          # Salidas de entrenamiento (ignorado en git)
 ├── scripts/
-│   ├── finetune_lora.py             # Entrenamiento LoRA (v1.1.0)
+│   ├── finetune_lora.py             # Entrenamiento LoRA (v1.1.1)
 │   ├── inference_lora.py            # Inferencia determinista (v1.0.2)
 │   └── validate_environment.py      # Checklist opcional de diagnóstico
 ├── .gitignore
 └── README.md (este documento)
 ```
-
-## 🧪 Resultados Destacados
-- Con sólo 20 instrucciones iniciales se logra un chatbot que entiende flujos corporativos simples.
-- El adaptador LoRA replica procedimientos secuenciales con numeraciones consistentes.
-- El tiempo de entrenamiento en RTX 4060 Ti < 10 minutos.
-
-## 🛣️ Próximos Pasos
-- Aumentar el dataset con más procesos internos.
-- Añadir evaluación cuantitativa (BLEU, ROUGE, precisión manual).
-- Integrar despliegue vía API REST para consumir el modelo fine-tuned en producción.
-
-## 📄 Licencia y Autor
-Este proyecto es de uso personal y demuestra capacidades de MLOps / IA aplicada. Puedes reutilizarlo adaptando los scripts a tus propios datos.
-
-**Autor:** Andrew Vergel  ·  [LinkedIn](https://www.linkedin.com/in/andrewvergel/)  ·  [Repositorio GitHub](https://github.com/andrewvergel/finetuning-linux)
-
-¡Gracias por revisar este proyecto! Estoy abierto a colaborar en iniciativas de IA aplicada, automatización de procesos y plataformas de asistentes inteligentes.
-
-## ☁️ Infraestructura Recomendada
-Para quienes no cuenten con una RTX 4060 Ti local, recomiendo utilizar instancias bajo demanda en [cloud.vast.ai](https://cloud.vast.ai/instances/). Las pruebas finales de este proyecto se realizaron en la instancia `27712045` (host `79466`, machine `13313`) con las siguientes características:
-
-- **GPU:** 16 GB VRAM (CUDA 12.9, ~21.6 TFLOPS)
-- **CPU:** AMD Ryzen 9 3900X (12/24 hilos)
-- **RAM:** 64 GB DDR4
-- **Almacenamiento:** NVMe PCIe 4.0 (4 TB, ~4.7 GB/s)
-- **Red:** ~1.6 Gbps simétricos
-
-La plataforma ofrece una buena relación costo/rendimiento (≈236 DLP/$/hr) y permite desplegar rápidamente el entorno descrito en este repositorio.
