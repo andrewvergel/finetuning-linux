@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 LoRA Fine-tuning Script for RTX 4060 Ti
-Version: 1.0.2
+Version: 1.0.3
 Author: Auto-generated from INSTRUCTIONS.md
 Optimized for: RTX 4060 Ti (16GB VRAM)
 
 Changelog:
+- v1.0.3: Fixed max_seq_length access error in training info display
 - v1.0.2: Fixed packing for small datasets (disable packing if < 10 examples)
 - v1.0.1: Fixed TRL compatibility for v0.7.4, added TF32 support
 - v1.0.0: Initial version with RTX 4060 Ti optimization
@@ -110,6 +111,7 @@ def main():
     ds = ds.map(format_example, remove_columns=ds.column_names)
     
     # Configuración optimizada para RTX 4060 Ti (16GB VRAM)
+    max_seq_len = 2048  # Store max sequence length as variable
     sft_args = TrainingArguments(
         output_dir=OUT_DIR,
         per_device_train_batch_size=6,  # Adjusted for RTX 4060 Ti
@@ -144,7 +146,7 @@ def main():
         train_dataset=ds,
         args=sft_args,
         formatting_func=lambda ex: ex["text"],
-        max_seq_length=2048,  # Add max_seq_length here instead of in TrainingArguments
+        max_seq_length=max_seq_len,  # Add max_seq_length here instead of in TrainingArguments
         packing=use_packing,  # Conditionally enable packing based on dataset size
     )
     print(">> Trainer initialized")
@@ -157,7 +159,7 @@ def main():
     print(">> Starting training...")
     print(f"   - Batch size: {sft_args.per_device_train_batch_size}")
     print(f"   - Gradient accumulation: {sft_args.gradient_accumulation_steps}")
-    print(f"   - Max sequence length: {sft_args.max_seq_length}")
+    print(f"   - Max sequence length: {max_seq_len}")
     print(f"   - Training epochs: {sft_args.num_train_epochs}")
     
     trainer.train()
