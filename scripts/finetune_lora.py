@@ -124,6 +124,7 @@ EVAL_STEPS = env_int("FT_EVAL_STEPS", 100)
 SAVE_STEPS = env_int("FT_SAVE_STEPS", 100)
 FORCE_PACKING = env_bool("FT_FORCE_PACKING", True)
 USE_QLORA = env_bool("FT_USE_QLORA", False)
+TRUST_REMOTE_CODE = env_bool("FT_TRUST_REMOTE_CODE", False)
 
 # Hardening/ruido
 os.environ.setdefault("TOKENIZERS_PARALLELISM", os.getenv("TOKENIZERS_PARALLELISM", "false"))
@@ -241,7 +242,14 @@ def main():
         eval_prompts = EVAL_FALLBACK_PROMPTS
 
     logging.info(">> Loading tokenizer: %s", MODEL_ID)
-    tok = AutoTokenizer.from_pretrained(MODEL_ID)
+    tokenizer_kwargs = {"trust_remote_code": True} if TRUST_REMOTE_CODE else {}
+    try:
+        tok = AutoTokenizer.from_pretrained(MODEL_ID, **tokenizer_kwargs)
+    except ValueError as exc:
+        if "Tokenizer class" in str(exc) and not TRUST_REMOTE_CODE:
+            logging.error("❌ Tokenizer for %s requires remote code. Set FT_TRUST_REMOTE_CODE=1 in your .env to allow it.", MODEL_ID)
+            return
+        raise
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     EOS = tok.eos_token
@@ -265,11 +273,19 @@ def main():
         model_kwargs["torch_dtype"] = torch.bfloat16
 
     logging.info(">> Loading model: %s", MODEL_ID)
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID,
-        device_map="auto",
-        **model_kwargs,
-    )
+    model_load_kwargs = dict(device_map="auto", **model_kwargs)
+    if TRUST_REMOTE_CODE:
+        model_load_kwargs["trust_remote_code"] = True
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_ID,
+            **model_load_kwargs,
+        )
+    except ValueError as exc:
+        if "requires you to execute the modeling code" in str(exc) and not TRUST_REMOTE_CODE:
+            logging.error("❌ Model %s requires remote code. Set FT_TRUST_REMOTE_CODE=1 in your .env to allow it.", MODEL_ID)
+            return
+        raise
     model.to(device)
     logging.info(">> Model loaded to device")
 
