@@ -376,9 +376,8 @@ def main():
     model = get_peft_model(model, peft_cfg)
     logging.info(">> LoRA configuration set (r=%d, targets=%s)", LORA_RANK, ",".join(LORA_TARGET_MODULES))
 
-    # Ensure model is in training mode and enable gradient computation
+    # Ensure model is in training mode 
     model.train()
-    model.requires_grad_(True)
     
     # Enable aggressive memory optimizations
     model.config.use_cache = False
