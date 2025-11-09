@@ -31,19 +31,19 @@ SCRIPT_NAME = "finetune_lora.py"
 
 # ======== Tunable Hyperparameters ========
 MODEL_ID = "microsoft/DialoGPT-medium"
-DATA_PATH = "data/instructions.jsonl"
+DATA_PATH = os.getenv("FINETUNE_DATA_PATH", "data/instructions.jsonl")
 OUT_DIR = "models/out-tinyllama-lora"
 
 # Dataset expansion & batching
-DATASET_MIN_EXAMPLES = 240
+DATASET_MIN_EXAMPLES = 360
 PER_DEVICE_BATCH_SIZE = 4
-GRADIENT_ACCUMULATION = 3
+GRADIENT_ACCUMULATION = 2
 
 # Training schedule
-NUM_EPOCHS = 30
-LEARNING_RATE = 1.2e-4
-WARMUP_RATIO = 0.06
-LR_SCHEDULER = "constant_with_warmup"
+NUM_EPOCHS = 35
+LEARNING_RATE = 9e-5
+WARMUP_RATIO = 0.08
+LR_SCHEDULER = "cosine"
 WEIGHT_DECAY = 0.0
 
 # LoRA configuration
@@ -54,11 +54,13 @@ LORA_TARGET_MODULES = ["c_attn", "c_proj"]
 
 # Misc
 LOGGING_STEPS = 5
-SAVE_STEPS = 100
+SAVE_STRATEGY = "epoch"
+SAVE_TOTAL_LIMIT = 3
 DATASET_SHUFFLE_SEED = 42
+VALIDATION_SPLIT = 0.15
 DEBUG_LOG_FILE = "debug_last_run.log"
 EVAL_MAX_NEW_TOKENS = 220
-EVAL_SAMPLE_SIZE = 5
+EVAL_SAMPLE_SIZE = 8
 EVAL_FALLBACK_PROMPTS = [
     {
         "system": "Eres un asistente experto en procesos internos.",
@@ -152,21 +154,29 @@ def main():
         logging.info(">> GPU: %s", torch.cuda.get_device_name(0))
         logging.info(">> VRAM: %.1fGB", vram_gb)
 
-    if not os.path.exists(DATA_PATH):
-        logging.error("❌ Error: %s not found!", DATA_PATH)
-        logging.error("Please create the dataset first using the instructions.")
+    dataset_path = DATA_PATH
+
+    if not os.path.exists(dataset_path):
+        logging.error("❌ Error: dataset %s not found.", dataset_path)
         return
 
-    logging.info(">> Loading dataset from: %s", DATA_PATH)
-    ds = load_dataset("json", data_files=DATA_PATH)["train"]
-    logging.info(">> Dataset loaded: %d examples", len(ds))
+    logging.info(">> Loading dataset from: %s", dataset_path)
+    raw_ds = load_dataset("json", data_files=dataset_path)["train"]
+    logging.info(">> Dataset loaded: %d examples", len(raw_ds))
+
+    if len(raw_ds) < 2:
+        logging.error("❌ Dataset too small (%d samples). Add more data before training.", len(raw_ds))
+        return
+
+    split = raw_ds.train_test_split(test_size=VALIDATION_SPLIT, seed=DATASET_SHUFFLE_SEED)
+    train_raw = split["train"].shuffle(seed=DATASET_SHUFFLE_SEED)
+    eval_raw = split["test"].shuffle(seed=DATASET_SHUFFLE_SEED)
 
     eval_prompts = []
-    sample_size = min(EVAL_SAMPLE_SIZE, len(ds))
+    sample_size = min(EVAL_SAMPLE_SIZE, len(eval_raw))
     if sample_size > 0:
-        base_indices = list(range(sample_size))
-        for idx in base_indices:
-            row = ds[idx]
+        for idx in range(sample_size):
+            row = eval_raw[idx]
             eval_prompts.append(
                 {
                     "system": row.get("system", ""),
@@ -174,7 +184,7 @@ def main():
                     "expected": row.get("output", ""),
                 }
             )
-    else:
+    if not eval_prompts:
         eval_prompts = EVAL_FALLBACK_PROMPTS
 
     logging.info(">> Loading model: %s", MODEL_ID)
@@ -215,12 +225,15 @@ def main():
     logging.info(">> LoRA model ready")
 
     logging.info(">> Formatting examples...")
-    ds = ds.map(format_example, remove_columns=ds.column_names)
+    train_ds = train_raw.map(format_example, remove_columns=train_raw.column_names)
+    eval_ds = eval_raw.map(format_example, remove_columns=eval_raw.column_names)
 
-    if len(ds) < DATASET_MIN_EXAMPLES:
-        repeat_factor = max(1, math.ceil(DATASET_MIN_EXAMPLES / len(ds)))
-        ds = concatenate_datasets([ds] * repeat_factor).shuffle(seed=DATASET_SHUFFLE_SEED)
-        logging.info(">> Dataset expanded via repetition: %dx -> %d samples", repeat_factor, len(ds))
+    if len(train_ds) < DATASET_MIN_EXAMPLES:
+        repeat_factor = max(1, math.ceil(DATASET_MIN_EXAMPLES / len(train_ds)))
+        train_ds = concatenate_datasets([train_ds] * repeat_factor).shuffle(seed=DATASET_SHUFFLE_SEED)
+        logging.info(">> Training dataset expanded via repetition: %dx -> %d samples", repeat_factor, len(train_ds))
+
+    logging.info(">> Train samples: %d | Eval samples: %d", len(train_ds), len(eval_ds))
 
     sft_args = TrainingArguments(
         output_dir=OUT_DIR,
@@ -229,8 +242,9 @@ def main():
         learning_rate=LEARNING_RATE,
         num_train_epochs=NUM_EPOCHS,
         logging_steps=LOGGING_STEPS,
-        save_steps=SAVE_STEPS,
-        evaluation_strategy="no",
+        evaluation_strategy="epoch",
+        save_strategy=SAVE_STRATEGY,
+        save_total_limit=SAVE_TOTAL_LIMIT,
         warmup_ratio=WARMUP_RATIO,
         lr_scheduler_type=LR_SCHEDULER,
         weight_decay=WEIGHT_DECAY,
@@ -240,20 +254,24 @@ def main():
         fp16=True,
         dataloader_num_workers=2,
         tf32=True,
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
     )
     logging.info(">> Training configuration set")
 
-    can_pack = len(ds) >= 40 and max_seq_len >= 2048
+    can_pack = len(train_ds) >= 40 and max_seq_len >= 2048
     use_packing = bool(can_pack)
     if use_packing:
-        logging.info(">> Dataset has %d examples - enabling packing for better efficiency", len(ds))
+        logging.info(">> Dataset has %d examples - enabling packing for better efficiency", len(train_ds))
     else:
-        logging.info(">> Packing disabled (dataset=%d, max_seq_len=%d)", len(ds), max_seq_len)
+        logging.info(">> Packing disabled (dataset=%d, max_seq_len=%d)", len(train_ds), max_seq_len)
 
     trainer = SFTTrainer(
         model=model,
         tokenizer=tok,
-        train_dataset=ds,
+        train_dataset=train_ds,
+        eval_dataset=eval_ds,
         args=sft_args,
         max_seq_length=max_seq_len,
         packing=use_packing,
@@ -269,9 +287,13 @@ def main():
     logging.info("   - Gradient accumulation: %s", sft_args.gradient_accumulation_steps)
     logging.info("   - Max sequence length: %d", max_seq_len)
     logging.info("   - Training epochs: %s", sft_args.num_train_epochs)
-    logging.info("   - Total training examples (after repeat): %d", len(ds))
+    logging.info("   - Total training examples (after repeat): %d", len(train_ds))
+    logging.info("   - Total evaluation examples: %d", len(eval_ds))
 
     trainer.train()
+
+    eval_metrics = trainer.evaluate()
+    logging.info(">> Validation metrics: %s", json.dumps(eval_metrics, indent=2))
 
     logging.info(">> Saving model...")
     trainer.model.save_pretrained(OUT_DIR)
@@ -280,12 +302,14 @@ def main():
     training_info = {
         "script_version": SCRIPT_VERSION,
         "model_id": MODEL_ID,
-        "dataset_size": len(ds),
+        "dataset_size": len(train_ds),
+        "eval_size": len(eval_ds),
         "training_time": datetime.now().isoformat(),
         "device": str(device),
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
         "vram_gb": round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1) if torch.cuda.is_available() else 0,
         "log_file": os.path.join("logs", DEBUG_LOG_FILE),
+        "eval_metrics": eval_metrics,
     }
 
     with open(os.path.join(OUT_DIR, "training_info.json"), "w") as f:

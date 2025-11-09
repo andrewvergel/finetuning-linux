@@ -49,10 +49,12 @@ JSONL
 
 ## 🛠️ Script de Entrenamiento (`scripts/finetune_lora.py`)
 - Basado en LoRA (r=32) sobre las capas `c_attn` y `c_proj` de DialoGPT-medium (ajustable por constantes).
-- Duplica datasets pequeños hasta ~240 ejemplos para dar más iteraciones útiles.
-- Entrenamiento balanceado: batch efectivo 12 (4×3), 30 épocas, scheduler `constant_with_warmup` (warmup 6%).
+- El entrenamiento usa por defecto `data/instructions.jsonl` (puedes sobreescribirlo con la variable `FINETUNE_DATA_PATH`).
+- Duplica datasets pequeños hasta ~360 ejemplos solo sobre el split de entrenamiento.
+- Entrenamiento balanceado: batch efectivo 8 (4×2), 35 épocas, scheduler `cosine` (warmup 8%) y sin weight decay.
 - Genera `training_info.json` con metadatos y deja un log detallado en `logs/debug_last_run.log`.
-- Ejecuta una evaluación rápida al final tomando 5 muestras del propio dataset (o un fallback predefinido) y deja la comparación esperada/obtenida en el log.
+- Reserva automáticamente 15% para validación, corre evaluación al final de cada época y guarda el mejor checkpoint según `eval_loss`.
+- Ejecuta una evaluación rápida al final tomando ejemplos del split de validación (o un fallback predefinido) y deja la comparación esperada/obtenida en el log.
 
 ## 💬 Script de Inferencia (`scripts/inference_lora.py`)
 - Carga el adaptador LoRA desde `models/out-tinyllama-lora`.
