@@ -70,19 +70,29 @@ def env_bool(key: str, default: bool) -> bool:
 
 load_env_file()
 
-BASE_MODEL_ID = env_str("INF_BASE_MODEL_ID", "microsoft/DialoGPT-medium")
-ADAPTER_PATH = env_str("INF_ADAPTER_PATH", "models/out-tinyllama-lora")
+# Model and Paths - Match with training script
+BASE_MODEL_ID = env_str("FT_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
+ADAPTER_PATH = env_str("FT_OUT_DIR", "models/out-lora")
+
+# Generation settings
 DEFAULT_SYSTEM_PROMPT = env_str("INF_SYSTEM_PROMPT", "Eres un asistente profesional y conciso.")
 DEFAULT_TEST_PROMPT = env_str(
     "INF_TEST_PROMPT", "Dame un checklist de conciliación de pagos de los lunes."
 )
-MAX_INPUT_TOKENS = env_int("INF_MAX_INPUT_TOKENS", 2048)
-MAX_NEW_TOKENS = env_int("INF_MAX_NEW_TOKENS", 200)
-REPETITION_PENALTY = env_float("INF_REPETITION_PENALTY", 1.05)
-DO_SAMPLE = env_bool("INF_DO_SAMPLE", False)
+
+# Token limits - Match with training script
+MAX_INPUT_TOKENS = env_int("FT_MAX_SEQ_LEN", 512)  # Match training sequence length
+MAX_NEW_TOKENS = env_int("INF_MAX_NEW_TOKENS", 128)  # Reduced from 200 to match training
+
+# Generation parameters
+DO_SAMPLE = env_bool("INF_DO_SAMPLE", False)  # Use greedy decoding by default
 TEMPERATURE = env_float("INF_TEMPERATURE", 0.7 if DO_SAMPLE else 1.0)
 TOP_P = env_float("INF_TOP_P", 0.9 if DO_SAMPLE else 1.0)
+REPETITION_PENALTY = env_float("INF_REPETITION_PENALTY", 1.05)
 AUTO_START_CHAT = env_bool("INF_AUTO_CHAT", False)
+
+# Ensure we're using the same trust settings as training
+TRUST_REMOTE_CODE = env_bool("FT_TRUST_REMOTE_CODE", True)
 
 
 def log_version_info():
@@ -114,7 +124,8 @@ def load_model_and_tokenizer():
         return None, None, None
     
     # Check VRAM before loading
-    if torch.cuda.is_available():
+    device = get_device()
+    if device.type == "cuda":
         vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
         if vram_gb < 8:
             print(f"⚠️ Warning: Low VRAM detected ({vram_gb:.1f}GB). May encounter issues.")
@@ -127,33 +138,72 @@ def load_model_and_tokenizer():
         if available_gb < 6:
             print(f"⚠️ Warning: Only {available_gb:.1f}GB VRAM available. Consider closing other applications.")
     
-    # Load tokenizer
+    # Load tokenizer with same settings as training
     print(f">> Loading tokenizer from: {BASE_MODEL_ID}")
-    tok = AutoTokenizer.from_pretrained(BASE_MODEL_ID)
+    try:
+        tok = AutoTokenizer.from_pretrained(BASE_MODEL_ID, trust_remote_code=True)
+    except:
+        tok = AutoTokenizer.from_pretrained(BASE_MODEL_ID)
+    
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     print(">> Tokenizer loaded")
     
-    # Load model base + LoRA
+    # Load model with same settings as training
     print(f">> Loading base model: {BASE_MODEL_ID}")
     try:
-        base = AutoModelForCausalLM.from_pretrained(
-            BASE_MODEL_ID,
-            torch_dtype=torch.float16,
-            device_map="auto"
-        )
+        # Use the same device mapping as training
+        device_map = {"": device.index if hasattr(device, 'index') and device.index is not None else 0}
+        
+        # Check if we should use 4-bit quantization (QLoRA)
+        use_qlora = env_bool("FT_USE_QLORA", True)
+        
+        if use_qlora and 'bitsandbytes' in globals():
+            print("🔧 Using QLoRA (4-bit) for inference")
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+            )
+            base = AutoModelForCausalLM.from_pretrained(
+                BASE_MODEL_ID,
+                quantization_config=bnb_config,
+                trust_remote_code=env_bool("FT_TRUST_REMOTE_CODE", True),
+                device_map=device_map,
+                torch_dtype=torch.bfloat16
+            )
+        else:
+            base = AutoModelForCausalLM.from_pretrained(
+                BASE_MODEL_ID,
+                trust_remote_code=env_bool("FT_TRUST_REMOTE_CODE", True),
+                device_map=device_map,
+                torch_dtype=torch.bfloat16
+            )
+            if not use_qlora:
+                base = base.to(device)
+                
         print(">> Base model loaded")
     except Exception as e:
         print(f"❌ Error loading base model: {e}")
+        import traceback
+        traceback.print_exc()
         return None, None, None
     
     print(f">> Loading LoRA adapter: {ADAPTER_PATH}")
     try:
-        model = PeftModel.from_pretrained(base, ADAPTER_PATH)
+        model = PeftModel.from_pretrained(
+            base, 
+            ADAPTER_PATH,
+            device_map={"": device},
+            torch_dtype=torch.bfloat16
+        )
         model.eval()
         print(">> LoRA model ready")
     except Exception as e:
         print(f"❌ Error loading LoRA adapter: {e}")
+        import traceback
+        traceback.print_exc()
         return None, None, None
     
     # Memory info after loading
@@ -182,37 +232,47 @@ def chat(user, system=DEFAULT_SYSTEM_PROMPT, model=None, tok=None, device=None):
         device = torch.device("cpu")
     
     try:
+        # Format prompt to match training format
         prompt = f"System: {system}\nUser: {user}\nAssistant:"
-        ids = tok(prompt, return_tensors="pt").to(device)
         
-        # Check input length
-        if ids.input_ids.shape[1] > MAX_INPUT_TOKENS:
-            print(f"⚠️ Warning: Input too long, truncating to {MAX_INPUT_TOKENS} tokens")
-            ids.input_ids = ids.input_ids[:, -MAX_INPUT_TOKENS:]
-            if ids.attention_mask is not None:
-                ids.attention_mask = ids.attention_mask[:, -MAX_INPUT_TOKENS:]
+        # Tokenize with same settings as training
+        ids = tok(
+            prompt,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=MAX_INPUT_TOKENS,
+            return_token_type_ids=False
+        ).to(device)
         
-        gen = model.generate(
-            **ids,
-            max_new_tokens=MAX_NEW_TOKENS,
-            do_sample=DO_SAMPLE,
-            temperature=TEMPERATURE,
-            top_p=TOP_P,
-            pad_token_id=tok.eos_token_id,
-            eos_token_id=tok.eos_token_id,
-            use_cache=True,
-            repetition_penalty=REPETITION_PENALTY,
-        )
+        # Generate with same settings as training
+        with torch.no_grad():
+            gen = model.generate(
+                input_ids=ids.input_ids,
+                attention_mask=ids.attention_mask,
+                max_new_tokens=MAX_NEW_TOKENS,
+                do_sample=DO_SAMPLE,
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+                pad_token_id=tok.eos_token_id,
+                eos_token_id=tok.eos_token_id,
+                use_cache=True,
+                repetition_penalty=REPETITION_PENALTY,
+                num_beams=1,  # Disable beam search for faster inference
+                do_early_stopping=True,
+            )
         
-        response = tok.decode(gen[0], skip_special_tokens=True)
-        if "Assistant:" in response:
-            response = response.split("Assistant:")[1].strip()
+        # Decode and clean up response
+        response = tok.decode(gen[0][ids.input_ids.shape[1]:], skip_special_tokens=True)
+        response = response.split("\n")[0].strip()  # Take only the first line of response
         
-        print("🤖 Respuesta:", response)
+        print("\n🤖 Respuesta:", response)
         return response
         
     except Exception as e:
         print(f"❌ Error during generation: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def interactive_chat(model, tok, device):
