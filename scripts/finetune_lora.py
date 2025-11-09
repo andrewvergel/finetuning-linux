@@ -368,20 +368,43 @@ def main():
     model = get_peft_model(model, peft_cfg)
     logging.info(">> LoRA configuration set (r=%d, targets=%s)", LORA_RANK, ",".join(LORA_TARGET_MODULES))
 
+    # Ensure model is in training mode and enable gradient computation
+    model.train()
+    model.requires_grad_(True)
+    
     # Enable gradient checkpointing and disable cache to save memory
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
     logging.info(">> Gradient checkpointing enabled")
     
+    # Print trainable parameters
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
+    logging.info(f">> Trainable parameters: {trainable_params:,} / {total_params:,} ({100 * trainable_params / total_params:.2f}%)")
+    
     # Enable CPU offload for optimizer states if using QLoRA
     if USE_QLORA:
         try:
             from accelerate import Accelerator
-            accelerator = Accelerator()
-            model = accelerator.prepare(model)
+            from accelerate.utils import set_seed
+            set_seed(42)  # For reproducibility
+            
+            # Initialize accelerator with gradient accumulation
+            accelerator = Accelerator(
+                gradient_accumulation_steps=GRADIENT_ACCUMULATION,
+                mixed_precision='bf16' if not USE_QLORA else 'no'
+            )
+            
+            # Prepare model with accelerator
+            model = accelerator.prepare_model(model)
             logging.info(">> CPU offload for optimizer states enabled")
         except Exception as e:
             logging.warning("Could not enable CPU offload: %s", e)
+    
+    # Verify model parameters require gradients
+    for name, param in model.named_parameters():
+        if 'lora_' in name and not param.requires_grad:
+            logging.warning(f"Parameter {name} does not require gradients!")
 
     # Dataset -> texto formateado + EOS
     logging.info(">> Formatting and validating examples...")
@@ -521,6 +544,11 @@ def main():
         ]
 
         logging.info("🚀 Inicializando SFTTrainer...")
+        
+        # Ensure model is on the correct device
+        model = model.to(device)
+        
+        # Initialize trainer with proper gradient settings
         trainer = SFTTrainer(
             model=model,
             tokenizer=tok,
@@ -534,6 +562,15 @@ def main():
             dataset_num_proc=2,  # Procesamiento en paralelo
             callbacks=callbacks,
         )
+        
+        # Verify model is ready for training
+        trainer.model.train()
+        trainer.model.requires_grad_(True)
+        
+        # Print model device and training status
+        logging.info(f">> Model device: {next(trainer.model.parameters()).device}")
+        logging.info(f">> Model training mode: {trainer.model.training}")
+        logging.info(f">> Model requires_grad: {next(trainer.model.parameters()).requires_grad}")
         
         # Validar configuración
         if trainer.eval_dataset is None:
