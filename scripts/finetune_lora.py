@@ -28,7 +28,7 @@ from typing import List
 from datetime import datetime
 
 import torch
-from datasets import load_dataset, concatenate_datasets
+from datasets import load_dataset, concatenate_datasets, Dataset
 from packaging import version
 from transformers import (
     AutoModelForCausalLM,
