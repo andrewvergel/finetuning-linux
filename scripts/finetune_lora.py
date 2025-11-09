@@ -347,7 +347,7 @@ def main():
     if use_packing:
         logging.info(">> Dataset has %d examples - enabling packing for better efficiency", len(train_ds))
     else:
-        logging.info(">> Packing disabled (dataset=%d, max_seq_len=%d)", len(train_ds), max_seq_len)
+        logging.info(">> Packing disabled (dataset=%d, max_seq_len=%d) but dataset is already tokenized", len(train_ds), max_seq_len)
 
     trainer = SFTTrainer(
         model=model,
@@ -356,7 +356,7 @@ def main():
         eval_dataset=tokenized_eval_ds,
         args=sft_args,
         max_seq_length=max_seq_len,
-        packing=use_packing,
+        packing=True,
     )
     logging.info(">> Trainer initialized")
 
