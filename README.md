@@ -51,7 +51,7 @@ JSONL
 - Basado en LoRA (r=32) sobre las capas `c_attn` y `c_proj` de DialoGPT-medium (ajustable por constantes).
 - El entrenamiento usa por defecto `data/instructions.jsonl` (puedes sobreescribirlo con la variable `FINETUNE_DATA_PATH`).
 - Duplica datasets pequeños hasta ~420 ejemplos solo sobre el split de entrenamiento.
-- Entrenamiento altamente regularizado: batch efectivo 8 (1×8), 18 épocas, scheduler `cosine` (warmup 15%) y sin weight decay.
+- Entrenamiento altamente regularizado: batch efectivo 8 (1×8), 18 épocas, scheduler `cosine` (warmup 5%) y sin weight decay.
 - Genera `training_info.json` con metadatos y deja un log detallado en `logs/debug_last_run.log`.
 - Reserva automáticamente 15% para validación, corre evaluación al final de cada época y guarda el mejor checkpoint según `eval_loss`.
 - Ejecuta una evaluación rápida al final tomando 12 ejemplos del split de validación (o un fallback predefinido) y deja la comparación esperada/obtenida en el log.
@@ -73,14 +73,14 @@ JSONL
 - **Si necesitas más calidad:** en lugar de más épocas, amplía el dataset real (no repitas) o prueba un modelo base mayor.
 
 ### 📊 Guía rápida de hiperparámetros
-- `DATASET_MIN_EXAMPLES = 160` → número mínimo de muestras tras repetir el split de entrenamiento (ej.: con 20 instrucciones reales se repite 8×). *Subirlo* (200) añade más iteraciones; *bajarlo* (120) para datasets más variados o smoke-tests muy rápidos.
+- `DATASET_MIN_EXAMPLES = 160` → número mínimo de muestras tras repetir el split de entrenamiento (ej.: con 20 instrucciones reales se repite 8×, pero con 20 y split 20% se obtiene ~17 train/3 eval). *Subirlo* (200) añade más iteraciones; *bajarlo* (120) para datasets más variados o smoke-tests muy rápidos.
 - `PER_DEVICE_BATCH_SIZE = 1` → muestras procesadas por GPU antes de acumular gradientes. Consume ~1 GB y ofrece actualizaciones más frecuentes (1×8). *Subirlo* (2) si la GPU lo permite; *bajarlo* no es posible (mínimo 1).
 - `GRADIENT_ACCUMULATION = 8` → número de pasos antes de aplicar actualización (batch efectivo = 1×8 = 8). *Subirlo* (10) para aún más regularización; *bajarlo* (4) si necesitas converger más rápido.
 - `NUM_EPOCHS = 18` → cada ejemplo se ve 18 veces tras repetición (~2 880 muestras). *Subirlo* (22) si la pérdida sigue bajando; *bajarlo* (14) para convergencia más rápida con datasets más ricos.
 - `LEARNING_RATE = 2.5e-5` → velocidad de aprendizaje base (25 micro). Valores bajos evitan sobreajuste en datasets repetidos. *Subirlo* (3e-5) si la pérdida se estanca; *bajarlo* (2e-5) para máxima estabilidad.
-- `WARMUP_RATIO = 0.15` → porcentaje inicial de pasos con LR creciente (primer ~460 pasos). *Subirlo* (0.2) para un arranque más suave; *bajarlo* (0.1) si usas LR más alto y buscas rapidez.
+- `WARMUP_RATIO = 0.05` → porcentaje inicial de pasos con LR creciente (primer ~170 pasos). *Subirlo* (0.1) si el LR arranca demasiado alto; *bajarlo* (0.02) para convergencia más rápida.
 - `LORA_DROPOUT = 0.25` → regularización sobre las capas adaptadas (alta). *Subirlo* (0.3) si sigue delirando; *bajarlo* (0.2) cuando veasunderfitting y quieras más fidelidad.
-- `EVAL_SAMPLE_SIZE = 6` → cantidad de ejemplos del split de validación usados en la evaluación rápida (menos es más rápido). *Subirlo* (8) si quieres más señales; *bajarlo* (4) para pruebas súper rápidas.
+- `EVAL_SAMPLE_SIZE = 8` → cantidad de ejemplos del split de validación usados en la evaluación rápida (ahora hay más validación total con split 20%).
 
 ## 💬 Script de Inferencia (`scripts/inference_lora.py`)
 - Carga el adaptador LoRA desde `models/out-tinyllama-lora`.
