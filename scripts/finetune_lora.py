@@ -117,9 +117,12 @@ OUT_DIR = env_str("FT_OUT_DIR", "models/out-lora")
 
 # Memory optimization parameters
 DATASET_MIN_EXAMPLES = env_int("FT_DATASET_MIN_EXAMPLES", 240)
-PER_DEVICE_BATCH_SIZE = env_int("FT_PER_DEVICE_BATCH_SIZE", 1)  # Reduced to 1
-GRADIENT_ACCUMULATION = env_int("FT_GRADIENT_ACCUMULATION", 16)  # Increased to 16
-MAX_SEQ_LEN_OVERRIDE = env_int("FT_MAX_SEQ_LEN", 1024)  # Reduced to 1024
+PER_DEVICE_BATCH_SIZE = env_int("FT_PER_DEVICE_BATCH_SIZE", 1)  # Minimal batch size
+GRADIENT_ACCUMULATION = env_int("FT_GRADIENT_ACCUMULATION", 32)  # Increased to 32
+MAX_SEQ_LEN_OVERRIDE = env_int("FT_MAX_SEQ_LEN", 512)  # Further reduced to 512
+
+# Enable memory optimizations
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:True"
 
 # Training parameters
 NUM_EPOCHS = env_int("FT_NUM_EPOCHS", 8)
@@ -129,11 +132,11 @@ LR_SCHEDULER = env_str("FT_LR_SCHEDULER", "cosine")
 WEIGHT_DECAY = env_float("FT_WEIGHT_DECAY", 0.01)
 
 # LoRA parameters - optimized for memory efficiency
-LORA_RANK = env_int("FT_LORA_RANK", 8)  # Reduced rank
-LORA_ALPHA = env_int("FT_LORA_ALPHA", 16)  # Reduced alpha
-LORA_DROPOUT = env_float("FT_LORA_DROPOUT", 0.05)  # Reduced dropout
-# Target only query and value layers to save memory
-LORA_TARGET_MODULES = env_list("FT_LORA_TARGET_MODULES", ["q_proj", "v_proj"])
+LORA_RANK = env_int("FT_LORA_RANK", 4)  # Further reduced rank
+LORA_ALPHA = env_int("FT_LORA_ALPHA", 8)  # Further reduced alpha
+LORA_DROPOUT = env_float("FT_LORA_DROPOUT", 0.01)  # Minimal dropout
+# Target only query layers to save memory (most important for learning)
+LORA_TARGET_MODULES = env_list("FT_LORA_TARGET_MODULES", ["q_proj"])
 
 # Training configuration
 LOGGING_STEPS = env_int("FT_LOGGING_STEPS", 10)
@@ -377,10 +380,12 @@ def main():
     model.train()
     model.requires_grad_(True)
     
-    # Enable gradient checkpointing and disable cache to save memory
+    # Enable aggressive memory optimizations
     model.config.use_cache = False
-    model.gradient_checkpointing_enable()
-    logging.info(">> Gradient checkpointing enabled")
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    torch.backends.cuda.enable_mem_efficient_sdp(False)  # Disable memory-efficient attention
+    torch.backends.cuda.enable_flash_sdp(False)  # Disable flash attention
+    logging.info(">> Gradient checkpointing enabled with reentrant=False")
     
     # Print trainable parameters
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
