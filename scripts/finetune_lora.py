@@ -298,54 +298,36 @@ def main():
     logging.info(">> Tokenizer loaded")
 
     # Carga de modelo (bf16 o QLoRA 4-bit)
-    model_kwargs = {}
-    if USE_QLORA:
-        if not _HAS_BNB:
-            logging.error("❌ FT_USE_QLORA=true pero bitsandbytes no está instalado. `pip install bitsandbytes`")
-            return
-        bnb_cfg = BitsAndBytesConfig(
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device_map = {"": device.index if hasattr(device, 'index') and device.index is not None else 0}
+    
+    if USE_QLORA and _HAS_BNB:
+        logging.info("🔧 Configurando QLoRA (4-bit)")
+        bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
-            bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
         )
-        model_kwargs["quantization_config"] = bnb_cfg
-        logging.info(">> QLoRA 4-bit activado (NF4, compute bf16)")
-    else:
-        model_kwargs["torch_dtype"] = torch.bfloat16
-
-    # Forzar carga íntegra en la GPU
-    target_device_idx = device.index if device.index is not None else 0
-    if USE_QLORA:
-        model_kwargs["device_map"] = {"": f"cuda:{target_device_idx}"}
-    else:
-        model_kwargs["device_map"] = None
-
-    logging.info(">> Loading model: %s", MODEL_ID)
-    model_load_kwargs = dict(**model_kwargs)
-    if TRUST_REMOTE_CODE:
-        model_load_kwargs["trust_remote_code"] = True
-    try:
+        
         model = AutoModelForCausalLM.from_pretrained(
             MODEL_ID,
-            **model_load_kwargs,
+            quantization_config=bnb_config,
+            trust_remote_code=TRUST_REMOTE_CODE,
+            device_map=device_map,
+            torch_dtype=torch.bfloat16
         )
-    except ValueError as exc:
-        if "requires you to execute the modeling code" in str(exc) and not TRUST_REMOTE_CODE:
-            logging.warning(
-                "Model %s requires remote code. Retrying once with trust_remote_code=True (set FT_TRUST_REMOTE_CODE=1 to silence this warning).",
-                MODEL_ID,
-            )
-            model = AutoModelForCausalLM.from_pretrained(
-                MODEL_ID,
-                **model_kwargs,
-                trust_remote_code=True,
-            )
-        else:
-            raise
-    if not USE_QLORA:
-        model.to(device)
-    logging.info(">> Model loaded en GPU (%s)", f"cuda:{target_device_idx}")
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_ID,
+            trust_remote_code=TRUST_REMOTE_CODE,
+            device_map=device_map,
+            torch_dtype=torch.bfloat16
+        )
+        if not USE_QLORA:
+            model.to(device)
+    
+    logging.info(">> Model loaded on %s", device)
 
     # Longitud de contexto & packing
     # Selecciona el mínimo válido entre modelo/tokenizer/override
