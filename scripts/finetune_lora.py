@@ -29,6 +29,7 @@ from datetime import datetime
 
 import torch
 from datasets import load_dataset, concatenate_datasets
+from packaging import version
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -90,6 +91,24 @@ def env_list(key: str, default: List[str]) -> List[str]:
     return items or default
 
 load_env_file()
+
+import transformers
+import peft
+
+REQUIRED_TRANSFORMERS = "4.40.0"
+REQUIRED_PEFT = "0.10.0"
+
+if version.parse(transformers.__version__) < version.parse(REQUIRED_TRANSFORMERS):
+    raise RuntimeError(
+        f"transformers>={REQUIRED_TRANSFORMERS} is required for {MODEL_ID}. "
+        f"Found {transformers.__version__}. Please upgrade: pip install --upgrade transformers"
+    )
+
+if version.parse(peft.__version__) < version.parse(REQUIRED_PEFT):
+    raise RuntimeError(
+        f"peft>={REQUIRED_PEFT} is required for this script. Found {peft.__version__}. "
+        f"Please upgrade: pip install --upgrade peft"
+    )
 
 # ======== Tunables por .env ========
 MODEL_ID = env_str("FT_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")

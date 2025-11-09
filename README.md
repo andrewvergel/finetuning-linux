@@ -34,6 +34,7 @@ pip install -r requirements.txt
 > 💡 Si partes de un servidor recién formateado, instala previamente los drivers NVIDIA, CUDA 12.1 y utilidades del sistema (detallado en secciones posteriores del repositorio original).
 > 📦 `requirements.txt` incluye todas las librerías auxiliares; aun así, instalamos `numpy<2.0` y `pyarrow==14.0.1` antes para evitar conflictos conocidos con `datasets` (error `PyExtensionType`).
 > 🔍 Antes de entrenar, puedes ejecutar `python scripts/validate_environment.py` para verificar versiones de Python, CUDA, VRAM disponible, dataset y dependencias.
+> 🧩 Para modelos Qwen2.5 asegúrate de usar `transformers>=4.40` y `peft>=0.10` (ya fijados en `requirements.txt`).
 > 🧾 Cada entrenamiento deja un log detallado en `logs/debug_last_run.log` con métricas y respuestas de validación automática.
 
 ## 📚 Dataset de Instrucciones

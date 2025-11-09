@@ -1,8 +1,8 @@
-transformers==4.35.2
-datasets==2.14.6
-peft==0.6.0
-accelerate==0.24.1
-trl==0.7.6
+transformers==4.44.2
+datasets==2.19.1
+peft==0.11.1
+accelerate==0.34.2
+trl==0.9.6
 sentencepiece
 safetensors
 bitsandbytes
