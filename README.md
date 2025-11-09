@@ -51,10 +51,18 @@ JSONL
 - Basado en LoRA (r=32) sobre las capas `c_attn` y `c_proj` de DialoGPT-medium (ajustable por constantes).
 - El entrenamiento usa por defecto `data/instructions.jsonl` (puedes sobreescribirlo con la variable `FINETUNE_DATA_PATH`).
 - Duplica datasets pequeños hasta ~420 ejemplos solo sobre el split de entrenamiento.
-- Entrenamiento altamente regularizado: batch efectivo 8 (1×8), 18 épocas, scheduler `cosine` (warmup 5%) y sin weight decay.
+- Entrenamiento conservador para dataset pequeño: batch efectivo 6 (2×3), 12 épocas, scheduler `cosine` (warmup 10%) y sin weight decay.
 - Genera `training_info.json` con metadatos y deja un log detallado en `logs/debug_last_run.log`.
-- Reserva automáticamente 15% para validación, corre evaluación al final de cada época y guarda el mejor checkpoint según `eval_loss`.
-- Ejecuta una evaluación rápida al final tomando 12 ejemplos del split de validación (o un fallback predefinido) y deja la comparación esperada/obtenida en el log.
+- Reserva automáticamente 10% para validación, corre evaluación al final de cada época y guarda el mejor checkpoint según `eval_loss`.
+- Ejecuta una evaluación rápida al final tomando 6 ejemplos del split de validación (o un fallback predefinido) y deja la comparación esperada/obtenida en el log.
+
+### ⚠️ Limitaciones actuales y recomendaciones
+- **DialoGPT-medium (350M)** es un modelo grande para un dataset de solo 16 ejemplos únicos. Es normal que delire o repita respuestas.
+- **Recomendaciones para mejor rendimiento:**
+  1. **Cambiar a un modelo más pequeño** (ej.: `gpt2-medium` o `distilgpt2`) que requiera menos datos.
+  2. **Ampliar dataset**: 100–200 ejemplos únicos (no repeticiones) cubren mejor la variabilidad real.
+  3. **Evaluación consistente:** `eval_loss` debe bajar de forma estable, pero con 16 ejemplos el modelo aprende frases, no conceptos.
+  4. **Early stopping:** parar cuando `eval_loss` deje de mejorar 3 épocas seguidas.
 
 ### 🔍 Interpretación de logs y tuning
 #### Pérdida de entrenamiento
@@ -71,6 +79,11 @@ JSONL
 - Continuar entrenando puede llevar a **overfitting sutil** (responde mejor a ejemplos de entrenamiento pero falla en variaciones). 
 - **Criterio de parada:** si `eval_loss` deja de bajar por 3–4 épocas seguidas, detén el entrenamiento. 
 - **Si necesitas más calidad:** en lugar de más épocas, amplía el dataset real (no repitas) o prueba un modelo base mayor.
+
+#### ✅ Señales de progreso saludable (épocas 1–5)
+- `learning_rate` debería subir de ~6e-06 a ~3e-05 durante las primeras épocas (indica warmup funcionando).
+- `eval_loss` debe bajar de forma consistente (ej.: 7.8 → 6.9 entre época 1 y 3).
+- `loss` de entrenamiento entre 7.0–8.5 al inicio, bajando gradualmente.
 
 ### 📊 Guía rápida de hiperparámetros
 - `DATASET_MIN_EXAMPLES = 160` → número mínimo de muestras tras repetir el split de entrenamiento (ej.: con 20 instrucciones reales se repite 8×, pero con 20 y split 20% se obtiene ~17 train/3 eval). *Subirlo* (200) añade más iteraciones; *bajarlo* (120) para datasets más variados o smoke-tests muy rápidos.
