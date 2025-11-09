@@ -295,8 +295,15 @@ def main():
     else:
         model_kwargs["torch_dtype"] = torch.bfloat16
 
+    # Forzar carga íntegra en la GPU
+    target_device_idx = device.index if device.index is not None else 0
+    if USE_QLORA:
+        model_kwargs["device_map"] = {"": f"cuda:{target_device_idx}"}
+    else:
+        model_kwargs["device_map"] = None
+
     logging.info(">> Loading model: %s", MODEL_ID)
-    model_load_kwargs = dict(device_map="auto", **model_kwargs)
+    model_load_kwargs = dict(**model_kwargs)
     if TRUST_REMOTE_CODE:
         model_load_kwargs["trust_remote_code"] = True
     try:
@@ -313,13 +320,13 @@ def main():
             model = AutoModelForCausalLM.from_pretrained(
                 MODEL_ID,
                 **model_kwargs,
-                device_map="auto",
                 trust_remote_code=True,
             )
         else:
             raise
-    model.to(device)
-    logging.info(">> Model loaded to device")
+    if not USE_QLORA:
+        model.to(device)
+    logging.info(">> Model loaded en GPU (%s)", f"cuda:{target_device_idx}")
 
     # Longitud de contexto & packing
     # Selecciona el mínimo válido entre modelo/tokenizer/override
