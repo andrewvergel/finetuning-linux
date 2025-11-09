@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 LoRA Fine-tuning Script for RTX 4060 Ti
-Version: 1.0.1
+Version: 1.0.2
 Author: Auto-generated from INSTRUCTIONS.md
 Optimized for: RTX 4060 Ti (16GB VRAM)
 
 Changelog:
+- v1.0.2: Fixed packing for small datasets (disable packing if < 10 examples)
 - v1.0.1: Fixed TRL compatibility for v0.7.4, added TF32 support
 - v1.0.0: Initial version with RTX 4060 Ti optimization
 """
@@ -20,7 +21,7 @@ from peft import LoraConfig, get_peft_model
 from trl import SFTTrainer
 
 # Version information
-SCRIPT_VERSION = "1.0.1"
+SCRIPT_VERSION = "1.0.2"
 SCRIPT_NAME = "finetune_lora.py"
 
 def log_version_info():
@@ -130,6 +131,13 @@ def main():
     print(">> Training configuration set")
     
     # Initialize trainer
+    # Enable packing only if dataset has enough samples (minimum 10 for packing)
+    use_packing = len(ds) >= 10
+    if not use_packing:
+        print(f">> Dataset has {len(ds)} examples - disabling packing for small dataset")
+    else:
+        print(f">> Dataset has {len(ds)} examples - enabling packing")
+    
     trainer = SFTTrainer(
         model=model,
         tokenizer=tok,
@@ -137,7 +145,7 @@ def main():
         args=sft_args,
         formatting_func=lambda ex: ex["text"],
         max_seq_length=2048,  # Add max_seq_length here instead of in TrainingArguments
-        packing=True,  # Add packing here instead of in TrainingArguments
+        packing=use_packing,  # Conditionally enable packing based on dataset size
     )
     print(">> Trainer initialized")
     

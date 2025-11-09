@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
 Environment Validation Script for LoRA Fine-tuning
-Version: 1.0.1
+Version: 1.0.2
 Purpose: Validate all system requirements before fine-tuning
 Optimized for: RTX 4060 Ti (16GB VRAM)
 
 Usage: python scripts/validate_environment.py
+
+Changelog:
+- v1.0.2: Enhanced dataset validation and error reporting
+- v1.0.1: Initial comprehensive validation script
 """
 
 import os
@@ -15,7 +19,7 @@ import json
 from datetime import datetime
 
 # Version information
-SCRIPT_VERSION = "1.0.1"
+SCRIPT_VERSION = "1.0.2"
 SCRIPT_NAME = "validate_environment.py"
 
 def print_header():

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 LoRA Inference Script for RTX 4060 Ti
-Version: 1.0.0
+Version: 1.0.1
 Author: Auto-generated from INSTRUCTIONS.md
 Optimized for: RTX 4060 Ti (16GB VRAM)
 
 Changelog:
+- v1.0.1: Added safety checks, improved error handling, enhanced GPU memory management
 - v1.0.0: Initial version with RTX 4060 Ti optimization
 """
 
@@ -17,7 +18,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
 # Version information
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_VERSION = "1.0.1"
 SCRIPT_NAME = "inference_lora.py"
 
 def log_version_info():
@@ -40,7 +41,7 @@ def get_device():
         return torch.device("cpu")
 
 def load_model_and_tokenizer():
-    """Load the fine-tuned model and tokenizer"""
+    """Load the fine-tuned model and tokenizer with safety checks"""
     
     BASE = "microsoft/DialoGPT-medium"  # Same model used in training
     ADAPTER = "models/out-tinyllama-lora"
@@ -51,6 +52,20 @@ def load_model_and_tokenizer():
         print("Please run finetune_lora.py first to train the model.")
         return None, None, None
     
+    # Check VRAM before loading
+    if torch.cuda.is_available():
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+        if vram_gb < 8:
+            print(f"⚠️ Warning: Low VRAM detected ({vram_gb:.1f}GB). May encounter issues.")
+        
+        # Check if enough VRAM is available
+        torch.cuda.empty_cache()
+        available_memory = torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated()
+        available_gb = available_memory / 1e9
+        
+        if available_gb < 6:
+            print(f"⚠️ Warning: Only {available_gb:.1f}GB VRAM available. Consider closing other applications.")
+    
     # Load tokenizer
     print(f">> Loading tokenizer from: {BASE}")
     tok = AutoTokenizer.from_pretrained(BASE)
@@ -60,17 +75,30 @@ def load_model_and_tokenizer():
     
     # Load model base + LoRA
     print(f">> Loading base model: {BASE}")
-    base = AutoModelForCausalLM.from_pretrained(
-        BASE,
-        torch_dtype=torch.float16,
-        device_map="auto"
-    )
-    print(">> Base model loaded")
+    try:
+        base = AutoModelForCausalLM.from_pretrained(
+            BASE,
+            torch_dtype=torch.float16,
+            device_map="auto"
+        )
+        print(">> Base model loaded")
+    except Exception as e:
+        print(f"❌ Error loading base model: {e}")
+        return None, None, None
     
     print(f">> Loading LoRA adapter: {ADAPTER}")
-    model = PeftModel.from_pretrained(base, ADAPTER)
-    model.eval()
-    print(">> LoRA model ready")
+    try:
+        model = PeftModel.from_pretrained(base, ADAPTER)
+        model.eval()
+        print(">> LoRA model ready")
+    except Exception as e:
+        print(f"❌ Error loading LoRA adapter: {e}")
+        return None, None, None
+    
+    # Memory info after loading
+    if torch.cuda.is_available():
+        memory_allocated = torch.cuda.memory_allocated() / 1e9
+        print(f"📊 GPU Memory: {memory_allocated:.1f}GB used by model")
     
     # Load training info if available
     training_info_path = os.path.join(ADAPTER, "training_info.json")
@@ -82,31 +110,49 @@ def load_model_and_tokenizer():
     return model, tok, ADAPTER
 
 def chat(user, system="Eres un asistente profesional y conciso.", model=None, tok=None, device=None):
-    """Chat function with the fine-tuned model"""
+    """Chat function with the fine-tuned model with safety checks"""
     if model is None or tok is None:
         print("❌ Model or tokenizer not loaded")
         return None
     
-    prompt = f"System: {system}\nUser: {user}\nAssistant:"
-    ids = tok(prompt, return_tensors="pt").to(device)
+    # Check if device is available
+    if device.type == "cuda" and not torch.cuda.is_available():
+        print("❌ CUDA not available, falling back to CPU")
+        device = torch.device("cpu")
     
-    gen = model.generate(
-        **ids, 
-        max_new_tokens=400,  # Optimized for RTX 4060 Ti
-        do_sample=True, 
-        top_p=0.95, 
-        temperature=0.7,
-        pad_token_id=tok.eos_token_id,
-        eos_token_id=tok.eos_token_id,
-        use_cache=True  # Optimization for RTX 4060 Ti
-    )
-    
-    response = tok.decode(gen[0], skip_special_tokens=True)
-    if "Assistant:" in response:
-        response = response.split("Assistant:")[1].strip()
-    
-    print("🤖 Respuesta:", response)
-    return response
+    try:
+        prompt = f"System: {system}\nUser: {user}\nAssistant:"
+        ids = tok(prompt, return_tensors="pt").to(device)
+        
+        # Check input length
+        if ids.input_ids.shape[1] > 2048:
+            print("⚠️ Warning: Input too long, truncating to 2048 tokens")
+            ids.input_ids = ids.input_ids[:, -2048:]
+            if ids.attention_mask is not None:
+                ids.attention_mask = ids.attention_mask[:, -2048:]
+        
+        gen = model.generate(
+            **ids, 
+            max_new_tokens=400,  # Optimized for RTX 4060 Ti
+            do_sample=True, 
+            top_p=0.95, 
+            temperature=0.7,
+            pad_token_id=tok.eos_token_id,
+            eos_token_id=tok.eos_token_id,
+            use_cache=True,  # Optimization for RTX 4060 Ti
+            repetition_penalty=1.1  # Prevent repetitive outputs
+        )
+        
+        response = tok.decode(gen[0], skip_special_tokens=True)
+        if "Assistant:" in response:
+            response = response.split("Assistant:")[1].strip()
+        
+        print("🤖 Respuesta:", response)
+        return response
+        
+    except Exception as e:
+        print(f"❌ Error during generation: {e}")
+        return None
 
 def interactive_chat(model, tok, device):
     """Interactive chat loop"""
