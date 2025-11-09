@@ -35,16 +35,16 @@ DATA_PATH = "data/instructions.jsonl"
 OUT_DIR = "models/out-tinyllama-lora"
 
 # Dataset expansion & batching
-DATASET_MIN_EXAMPLES = 160
+DATASET_MIN_EXAMPLES = 240
 PER_DEVICE_BATCH_SIZE = 4
-GRADIENT_ACCUMULATION = 2
+GRADIENT_ACCUMULATION = 3
 
 # Training schedule
-NUM_EPOCHS = 20
-LEARNING_RATE = 1.8e-4
-WARMUP_RATIO = 0.04
-LR_SCHEDULER = "cosine"
-WEIGHT_DECAY = 0.01
+NUM_EPOCHS = 30
+LEARNING_RATE = 1.2e-4
+WARMUP_RATIO = 0.06
+LR_SCHEDULER = "constant_with_warmup"
+WEIGHT_DECAY = 0.0
 
 # LoRA configuration
 LORA_RANK = 32
@@ -58,7 +58,7 @@ SAVE_STEPS = 100
 DATASET_SHUFFLE_SEED = 42
 DEBUG_LOG_FILE = "debug_last_run.log"
 EVAL_MAX_NEW_TOKENS = 220
-EVAL_SAMPLE_SIZE = 3
+EVAL_SAMPLE_SIZE = 5
 EVAL_FALLBACK_PROMPTS = [
     {
         "system": "Eres un asistente experto en procesos internos.",
