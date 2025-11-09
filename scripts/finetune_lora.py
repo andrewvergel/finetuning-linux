@@ -463,7 +463,7 @@ def main():
     if stats['max_tokens'] > max_seq_len * 0.9:
         logging.warning("¡Atención! Algunos ejemplos están cerca del límite de contexto (%d tokens)", max_seq_len)
 
-    # Args de entrenamiento
+    # Configuración de TrainingArguments (mantenido por compatibilidad)
     sft_args = TrainingArguments(
         output_dir=OUT_DIR,
         per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
@@ -480,9 +480,9 @@ def main():
         lr_scheduler_type=LR_SCHEDULER,
         weight_decay=WEIGHT_DECAY,
         dataloader_pin_memory=True,
-        report_to="tensorboard",
-        logging_dir="logs",
-        bf16=not USE_QLORA,  # en QLoRA compute ya es bf16 vía bnb_cfg
+        report_to=["tensorboard"],
+        logging_dir=os.path.join(OUT_DIR, "logs"),
+        bf16=not USE_QLORA,
         fp16=False,
         dataloader_num_workers=2,
         tf32=True,
@@ -498,11 +498,36 @@ def main():
     try:
         # Configuración de SFT
         sft_config = SFTConfig(
+            output_dir=OUT_DIR,  # Directorio de salida requerido
             dataset_text_field="text",
             max_seq_length=max_seq_len,
             packing=use_packing,
             neftune_noise_alpha=5.0,  # Mejora la generalización
             dataset_num_proc=2,  # Procesamiento en paralelo
+            save_strategy=SAVE_STRATEGY,
+            save_steps=SAVE_STEPS,
+            save_total_limit=SAVE_TOTAL_LIMIT,
+            logging_steps=LOGGING_STEPS,
+            learning_rate=LEARNING_RATE,
+            num_train_epochs=NUM_EPOCHS,
+            gradient_accumulation_steps=GRADIENT_ACCUMULATION,
+            per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
+            per_device_eval_batch_size=PER_DEVICE_BATCH_SIZE,
+            warmup_ratio=WARMUP_RATIO,
+            lr_scheduler_type=LR_SCHEDULER,
+            weight_decay=WEIGHT_DECAY,
+            bf16=not USE_QLORA,
+            fp16=False,
+            tf32=True,
+            optim="adamw_torch",
+            load_best_model_at_end=True,
+            metric_for_best_model="eval_loss",
+            greater_is_better=False,
+            report_to=["tensorboard"],
+            logging_dir=os.path.join(OUT_DIR, "logs"),
+            dataloader_num_workers=2,
+            dataloader_pin_memory=True,
+            save_safetensors=True
         )
         
         # Callbacks
