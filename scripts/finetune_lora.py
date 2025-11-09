@@ -554,10 +554,8 @@ def main():
 
         logging.info("🚀 Inicializando SFTTrainer...")
         
-        # Ensure model is on the correct device
-        model = model.to(device)
-        
         # Initialize trainer with proper gradient settings
+        # Note: Don't call model.to(device) as SFTTrainer handles device placement
         trainer = SFTTrainer(
             model=model,
             tokenizer=tok,
@@ -573,13 +571,14 @@ def main():
         )
         
         # Verify model is ready for training
-        trainer.model.train()
-        trainer.model.requires_grad_(True)
-        
-        # Print model device and training status
         logging.info(f">> Model device: {next(trainer.model.parameters()).device}")
         logging.info(f">> Model training mode: {trainer.model.training}")
-        logging.info(f">> Model requires_grad: {next(trainer.model.parameters()).requires_grad}")
+        # Only log requires_grad for float parameters to avoid errors with QLoRA
+        float_params = [p for p in trainer.model.parameters() if p.dtype.is_floating_point]
+        if float_params:
+            logging.info(f">> First float parameter requires_grad: {float_params[0].requires_grad}")
+        else:
+            logging.info(">> No float parameters found in model (expected for QLoRA with 4-bit)")
         
         # Validar configuración
         if trainer.eval_dataset is None:
