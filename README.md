@@ -50,8 +50,8 @@ JSONL
 ## 🛠️ Script de Entrenamiento (`scripts/finetune_lora.py`)
 - Basado en LoRA (r=32) sobre las capas `c_attn` y `c_proj` de DialoGPT-medium (ajustable por constantes).
 - El entrenamiento usa por defecto `data/instructions.jsonl` (puedes sobreescribirlo con la variable `FINETUNE_DATA_PATH`).
-- Duplica datasets pequeños hasta ~420 ejemplos solo sobre el split de entrenamiento.
-- Entrenamiento altamente regularizado: batch efectivo 12 (1×12), 12 épocas, scheduler `linear` (warmup 10%) y con weight decay 0.1.
+- Base por defecto: `Qwen/Qwen2.5-7B-Instruct` (activando `FT_TRUST_REMOTE_CODE=1` en `.env`).
+- Entrenamiento altamente regularizado: batch efectivo 32 (4×8), 8 épocas, scheduler `cosine` (warmup 15%) y weight decay 0.01.
 - Genera `training_info.json` con metadatos y deja un log detallado en `logs/debug_last_run.log`.
 - Reserva automáticamente 15% para validación, corre evaluación al final de cada época y guarda el mejor checkpoint según `eval_loss`.
 - Ejecuta una evaluación rápida al final tomando 12 ejemplos del split de validación (o un fallback predefinido) y deja la comparación esperada/obtenida en el log.
@@ -107,14 +107,14 @@ FT_EVAL_SAMPLE_SIZE=10
 - `loss` de entrenamiento entre 7.0–8.5 al inicio, bajando gradualmente.
 
 ### 📊 Guía rápida de hiperparámetros
-- `DATASET_MIN_EXAMPLES = 240` → número mínimo de muestras tras repetir el split de entrenamiento (ej.: con 20 instrucciones reales se repite 12×). *Subirlo* (300) añade más iteraciones; *bajarlo* (180) cuando agregues más ejemplos únicos.
-- `PER_DEVICE_BATCH_SIZE = 1` → muestras procesadas por GPU antes de acumular gradientes. Consume ~1 GB y ofrece actualizaciones más frecuentes (1×8). *Subirlo* (2) si la GPU lo permite; *bajarlo* no es posible (mínimo 1).
-- `GRADIENT_ACCUMULATION = 12` → número de pasos antes de aplicar actualización (batch efectivo = 1×12 = 12). *Subirlo* (16) suaviza más los gradientes; *bajarlo* (8) acelera si agregas datos.
-- `NUM_EPOCHS = 12` → cada ejemplo se ve 12 veces tras repetición (~2 880 muestras con repeat 12×). *Subirlo* (14) si `eval_loss` aún baja; *bajarlo* (10) cuando añadas más ejemplos originales.
-- `LEARNING_RATE = 2e-5` → velocidad de aprendizaje base (20 micro). *Subirlo* (2.5e-5) si la pérdida se estanca; *bajarlo* (1.5e-5) cuando notes inestabilidad en validación.
-- `WARMUP_RATIO = 0.1` → porcentaje inicial de pasos con LR creciente (primer ~170 pasos con 12 épocas). *Subirlo* (0.15) si el LR arranca agresivo; *bajarlo* (0.05) cuando uses LR más bajo.
-- `LORA_DROPOUT = 0.3` → regularización sobre las capas adaptadas. *Subirlo* (0.35) si persisten repeticiones; *bajarlo* (0.25) cuando agregues más variación al dataset.
-- `EVAL_SAMPLE_SIZE = 10` → cantidad de ejemplos del split de validación usados en la evaluación rápida (aprovecha el split del 20%).
+- `DATASET_MIN_EXAMPLES = 240` → número mínimo de muestras tras repetir el split de entrenamiento. *Subirlo* (300) añade más iteraciones; *bajarlo* (180) cuando agregues más ejemplos únicos.
+- `PER_DEVICE_BATCH_SIZE = 4` → muestras procesadas por GPU antes de acumular gradientes. Con QLoRA 4-bit el consumo de VRAM se mantiene estable. *Subirlo* (6) si dispones de más VRAM; *bajarlo* (2) para margen extra.
+- `GRADIENT_ACCUMULATION = 8` → batch efectivo 32 (4×8). *Subirlo* (10) suaviza más los gradientes; *bajarlo* (6) acelera cuando agregues más datos.
+- `NUM_EPOCHS = 8` → con repetición 12× cada muestra se ve unas 2 880 veces. *Subirlo* (10) si el `eval_loss` mejora; *bajarlo* (6) cuando amplíes el dataset.
+- `LEARNING_RATE = 1e-4` → LR recomendado por Qwen para LoRA. *Subirlo* (1.2e-4) si el loss se estanca; *bajarlo* (8e-5) si la validación oscila.
+- `WARMUP_RATIO = 0.15` → arranque suave (~15% de los pasos). *Subirlo* (0.2) si el loss inicial explota; *bajarlo* (0.1) cuando uses LR menores.
+- `LORA_DROPOUT = 0.15` → regularización sobre capas adaptadas. *Subirlo* (0.2) si aún repite; *bajarlo* (0.1) cuando tengas más ejemplos únicos.
+- `EVAL_SAMPLE_SIZE = 10` → cantidad de ejemplos del split de validación usados en la evaluación rápida.
 
 ## 💬 Script de Inferencia (`scripts/inference_lora.py`)
 - Carga el adaptador LoRA desde `models/out-tinyllama-lora`.

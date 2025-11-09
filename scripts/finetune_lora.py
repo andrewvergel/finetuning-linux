@@ -92,14 +92,14 @@ def env_list(key: str, default: List[str]) -> List[str]:
 load_env_file()
 
 # ======== Tunables por .env ========
-MODEL_ID = env_str("FT_MODEL_ID", "microsoft/DialoGPT-medium")
+MODEL_ID = env_str("FT_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
 DATA_PATH = env_str("FT_DATA_PATH", "data/instructions.jsonl")
 OUT_DIR = env_str("FT_OUT_DIR", "models/out-lora")
 
 DATASET_MIN_EXAMPLES = env_int("FT_DATASET_MIN_EXAMPLES", 240)
-PER_DEVICE_BATCH_SIZE = env_int("FT_PER_DEVICE_BATCH_SIZE", 2)
+PER_DEVICE_BATCH_SIZE = env_int("FT_PER_DEVICE_BATCH_SIZE", 4)
 GRADIENT_ACCUMULATION = env_int("FT_GRADIENT_ACCUMULATION", 8)
-MAX_SEQ_LEN_OVERRIDE = env_int("FT_MAX_SEQ_LEN", 1024)
+MAX_SEQ_LEN_OVERRIDE = env_int("FT_MAX_SEQ_LEN", 4096)
 
 NUM_EPOCHS = env_int("FT_NUM_EPOCHS", 8)
 LEARNING_RATE = env_float("FT_LEARNING_RATE", 1e-4)
@@ -110,7 +110,7 @@ WEIGHT_DECAY = env_float("FT_WEIGHT_DECAY", 0.01)
 LORA_RANK = env_int("FT_LORA_RANK", 16)
 LORA_ALPHA = env_int("FT_LORA_ALPHA", 32)
 LORA_DROPOUT = env_float("FT_LORA_DROPOUT", 0.15)
-LORA_TARGET_MODULES = env_list("FT_LORA_TARGET_MODULES", ["c_attn", "c_proj", "c_fc"])
+LORA_TARGET_MODULES = env_list("FT_LORA_TARGET_MODULES", ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])
 
 LOGGING_STEPS = env_int("FT_LOGGING_STEPS", 10)
 SAVE_STRATEGY = env_str("FT_SAVE_STRATEGY", "steps")
@@ -124,7 +124,7 @@ EVAL_STEPS = env_int("FT_EVAL_STEPS", 100)
 SAVE_STEPS = env_int("FT_SAVE_STEPS", 100)
 FORCE_PACKING = env_bool("FT_FORCE_PACKING", True)
 USE_QLORA = env_bool("FT_USE_QLORA", False)
-TRUST_REMOTE_CODE = env_bool("FT_TRUST_REMOTE_CODE", False)
+TRUST_REMOTE_CODE = env_bool("FT_TRUST_REMOTE_CODE", True)
 
 # Hardening/ruido
 os.environ.setdefault("TOKENIZERS_PARALLELISM", os.getenv("TOKENIZERS_PARALLELISM", "false"))
@@ -247,9 +247,13 @@ def main():
         tok = AutoTokenizer.from_pretrained(MODEL_ID, **tokenizer_kwargs)
     except ValueError as exc:
         if "Tokenizer class" in str(exc) and not TRUST_REMOTE_CODE:
-            logging.error("❌ Tokenizer for %s requires remote code. Set FT_TRUST_REMOTE_CODE=1 in your .env to allow it.", MODEL_ID)
-            return
-        raise
+            logging.warning(
+                "Tokenizer for %s requires remote code. Retrying once with trust_remote_code=True (set FT_TRUST_REMOTE_CODE=1 to silence this warning).",
+                MODEL_ID,
+            )
+            tok = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
+        else:
+            raise
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     EOS = tok.eos_token
@@ -283,9 +287,18 @@ def main():
         )
     except ValueError as exc:
         if "requires you to execute the modeling code" in str(exc) and not TRUST_REMOTE_CODE:
-            logging.error("❌ Model %s requires remote code. Set FT_TRUST_REMOTE_CODE=1 in your .env to allow it.", MODEL_ID)
-            return
-        raise
+            logging.warning(
+                "Model %s requires remote code. Retrying once with trust_remote_code=True (set FT_TRUST_REMOTE_CODE=1 to silence this warning).",
+                MODEL_ID,
+            )
+            model = AutoModelForCausalLM.from_pretrained(
+                MODEL_ID,
+                **model_kwargs,
+                device_map="auto",
+                trust_remote_code=True,
+            )
+        else:
+            raise
     model.to(device)
     logging.info(">> Model loaded to device")
 
