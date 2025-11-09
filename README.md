@@ -55,8 +55,7 @@ JSONL
 - Genera `training_info.json` con metadatos y deja un log detallado en `logs/debug_last_run.log`.
 - Reserva automáticamente 15% para validación, corre evaluación al final de cada época y guarda el mejor checkpoint según `eval_loss`.
 - Ejecuta una evaluación rápida al final tomando 12 ejemplos del split de validación (o un fallback predefinido) y deja la comparación esperada/obtenida en el log.
-- Usa `response_template="Assistant:"` y `train_on_prompt=False` en `SFTTrainer` para que solo aprenda de la respuesta, no del prompt.
-Soporta variables de entorno (`FT_*`). Puedes crear un `.env` en la raíz con los valores que necesites.
+- Soporta variables de entorno (`FT_*`). Puedes crear un `.env` en la raíz con los valores que necesites.
 
 ### 🧾 Ejemplo de `.env`
 ```bash

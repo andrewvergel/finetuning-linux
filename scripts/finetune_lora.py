@@ -332,8 +332,6 @@ def main():
         max_seq_length=max_seq_len,
         packing=use_packing,
         dataset_text_field="text",
-        response_template="Assistant:",
-        train_on_prompt=False,
     )
     logging.info(">> Trainer initialized")
 
