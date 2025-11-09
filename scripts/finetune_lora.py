@@ -290,6 +290,32 @@ def main():
 
     logging.info(">> Train samples: %d | Eval samples: %d", len(train_ds), len(eval_ds))
 
+    logging.info(">> Tokenizing datasets (batched)...")
+
+    def tokenize_batch(batch):
+        tokenized = tok(
+            batch["text"],
+            padding="max_length",
+            truncation=True,
+            max_length=max_seq_len,
+        )
+        tokenized["labels"] = [ids[:] for ids in tokenized["input_ids"]]
+        return tokenized
+
+    tokenized_train_ds = train_ds.map(
+        tokenize_batch,
+        batched=True,
+        remove_columns=train_ds.column_names,
+        desc="Tokenizing train dataset",
+    )
+
+    tokenized_eval_ds = eval_ds.map(
+        tokenize_batch,
+        batched=True,
+        remove_columns=eval_ds.column_names,
+        desc="Tokenizing eval dataset",
+    )
+
     sft_args = TrainingArguments(
         output_dir=OUT_DIR,
         per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
@@ -326,12 +352,11 @@ def main():
     trainer = SFTTrainer(
         model=model,
         tokenizer=tok,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
+        train_dataset=tokenized_train_ds,
+        eval_dataset=tokenized_eval_ds,
         args=sft_args,
         max_seq_length=max_seq_len,
         packing=use_packing,
-        dataset_text_field="text",
     )
     logging.info(">> Trainer initialized")
 
@@ -343,8 +368,8 @@ def main():
     logging.info("   - Gradient accumulation: %s", sft_args.gradient_accumulation_steps)
     logging.info("   - Max sequence length: %d", max_seq_len)
     logging.info("   - Training epochs: %s", sft_args.num_train_epochs)
-    logging.info("   - Total training examples (after repeat): %d", len(train_ds))
-    logging.info("   - Total evaluation examples: %d", len(eval_ds))
+    logging.info("   - Total training examples (after repeat): %d", len(tokenized_train_ds))
+    logging.info("   - Total evaluation examples: %d", len(tokenized_eval_ds))
 
     trainer.train()
 
@@ -358,8 +383,8 @@ def main():
     training_info = {
         "script_version": SCRIPT_VERSION,
         "model_id": MODEL_ID,
-        "dataset_size": len(train_ds),
-        "eval_size": len(eval_ds),
+        "dataset_size": len(tokenized_train_ds),
+        "eval_size": len(tokenized_eval_ds),
         "training_time": datetime.now().isoformat(),
         "device": str(device),
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
