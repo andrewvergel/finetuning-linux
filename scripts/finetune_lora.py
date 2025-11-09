@@ -538,6 +538,7 @@ def main():
         
         # Initialize SFTConfig with all parameters
         sft_config = SFTConfig(
+            output_dir=OUT_DIR,  # Directory where model checkpoints will be saved
             dataset_text_field="text",
             max_seq_length=max_seq_len,
             neftune_noise_alpha=5.0,  # Mejora la generalización
