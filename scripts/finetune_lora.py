@@ -116,16 +116,14 @@ def main():
         num_train_epochs=3,
         logging_steps=10,
         save_steps=500,
-        eval_strategy="no",
-        max_seq_length=2048,  # Takes advantage of 16GB VRAM
-        packing=True,
+        evaluation_strategy="no",  # Changed from eval_strategy
         warmup_ratio=0.03,
         dataloader_pin_memory=True,
         report_to="tensorboard",
         logging_dir="logs",
-        bf16=False,  # RTX 4060 Ti works better with FP16
-        tf32=True,   # TensorFloat-32 enabled
+        fp16=True,  # Changed from bf16=False to fp16=True
         dataloader_num_workers=2,  # Optimized for RTX 4060 Ti
+        # Removed invalid parameters: max_seq_length, packing, tf32
     )
     print(">> Training configuration set")
     

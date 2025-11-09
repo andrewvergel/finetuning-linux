@@ -520,17 +520,155 @@ pip install --upgrade trl==0.7.6
 pip install trl==0.7.6 transformers==4.35.2
 ```
 
+**⚠️ SOLUCIÓN INMEDIATA AL ERROR DE IMPORTS:**
+
+Si sigues viendo el error `from trl import SFTTrainer, SFTConfig`, aplica esta corrección:
+
 ```bash
-# Activar entorno
-source .venv/bin/activate
+# Edita tu archivo scripts/finetune_lora.py y cambia las líneas 6-8:
 
-# Ejecutar fine-tuning
+# CAMBIAR ESTAS LÍNEAS (líneas 6-8):
+# from trl import SFTTrainer, SFTConfig
+# from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# POR ESTAS LÍNEAS:
+from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
+from peft import LoraConfig, get_peft_model
+from trl import SFTTrainer
+
+# Y CAMBIAR EN EL CÓDIGO:
+# sft_args = SFTConfig(  # <- CAMBIAR ESTO
+sft_args = TrainingArguments(  # <- POR ESTO
+```
+
+**O más rápido, ejecuta este comando para aplicar el fix:**
+
+```bash
+# Crear el script corregido
+cat > scripts/finetune_lora.py << 'EOF'
+#!/usr/bin/env python3
+"""
+LoRA Fine-tuning Script for RTX 4060 Ti
+Version: 1.0.1
+Optimized for: RTX 4060 Ti (16GB VRAM)
+"""
+
+import os
+import torch
+import json
+from datetime import datetime
+from datasets import load_dataset
+from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
+from peft import LoraConfig, get_peft_model
+from trl import SFTTrainer
+
+SCRIPT_VERSION = "1.0.1"
+
+def main():
+    print(f"🚀 finetune_lora.py v{SCRIPT_VERSION}")
+    print(f"📅 Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f">> Device: {device}")
+    if torch.cuda.is_available():
+        print(f">> GPU: {torch.cuda.get_device_name(0)}")
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+        print(f">> VRAM: {vram_gb:.1f}GB")
+    
+    MODEL_ID = "microsoft/DialoGPT-medium"
+    DATA_PATH = "data/instructions.jsonl"
+    OUT_DIR = "models/out-tinyllama-lora"
+    
+    if not os.path.exists(DATA_PATH):
+        print(f"❌ Error: {DATA_PATH} not found!")
+        return
+    
+    print(f">> Loading dataset from: {DATA_PATH}")
+    ds = load_dataset("json", data_files=DATA_PATH)["train"]
+    print(f">> Dataset loaded: {len(ds)} examples")
+    
+    print(f">> Loading model: {MODEL_ID}")
+    tok = AutoTokenizer.from_pretrained(MODEL_ID)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+    
+    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=torch.float16, device_map="auto")
+    model.to(device)
+    print(">> Model loaded to device")
+    
+    peft_cfg = LoraConfig(r=32, lora_alpha=32, lora_dropout=0.05, target_modules=["c_attn"], bias="none", task_type="CAUSAL_LM")
+    model = get_peft_model(model, peft_cfg)
+    print(">> LoRA model ready")
+    
+    def format_example(ex):
+        sys = ex.get("system","Eres un asistente útil y conciso.")
+        prompt = f"System: {sys}\nUser: {ex['input']}\nAssistant: {ex['output']}"
+        return {"text": prompt}
+    
+    ds = ds.map(format_example, remove_columns=ds.column_names)
+    
+    sft_args = TrainingArguments(
+        output_dir=OUT_DIR,
+        per_device_train_batch_size=6,
+        gradient_accumulation_steps=4,
+        learning_rate=2e-4,
+        num_train_epochs=3,
+        logging_steps=10,
+        save_steps=500,
+        eval_strategy="no",
+        max_seq_length=2048,
+        warmup_ratio=0.03,
+        dataloader_pin_memory=True,
+        report_to="tensorboard",
+        logging_dir="logs",
+        tf32=True,
+    )
+    print(">> Training configuration set")
+    
+    trainer = SFTTrainer(
+        model=model,
+        tokenizer=tok,
+        train_dataset=ds,
+        args=sft_args,
+        formatting_func=lambda ex: ex["text"],
+    )
+    
+    os.makedirs(OUT_DIR, exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
+    
+    print(">> Starting training...")
+    trainer.train()
+    
+    print(">> Saving model...")
+    trainer.model.save_pretrained(OUT_DIR)
+    tok.save_pretrained(OUT_DIR)
+    
+    training_info = {
+        "script_version": SCRIPT_VERSION,
+        "model_id": MODEL_ID,
+        "dataset_size": len(ds),
+        "training_time": datetime.now().isoformat(),
+        "device": str(device),
+        "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
+        "vram_gb": round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1) if torch.cuda.is_available() else 0
+    }
+    
+    with open(os.path.join(OUT_DIR, "training_info.json"), "w") as f:
+        json.dump(training_info, f, indent=2)
+    
+    print("✅ Adaptador LoRA guardado en:", OUT_DIR)
+    print("✅ Logs disponibles en:", "logs/")
+    print("✅ Training info saved to training_info.json")
+    print(f"🎉 Training completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+if __name__ == "__main__":
+    main()
+EOF
+```
+
+**Luego ejecutar:**
+```bash
 python scripts/finetune_lora.py
-
-# Deberías ver:
-# >> Device detectado: cuda
-# >> GPU: NVIDIA GeForce RTX XXXX
-# >> Training completed successfully
 ```
 
 ### Probar Inferencia
