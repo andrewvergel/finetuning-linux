@@ -85,6 +85,7 @@ data/*.hdf5
 data/*.db
 data/*.sqlite
 data/*.sqlite3
+!data/instructions.jsonl
 
 # Raw data (may contain sensitive info)
 raw/
