@@ -536,24 +536,18 @@ def main():
 
         logging.info("🚀 Inicializando SFTTrainer...")
         
-        # Initialize SFTConfig with all parameters
-        sft_config = SFTConfig(
-            output_dir=OUT_DIR,  # Directory where model checkpoints will be saved
-            dataset_text_field="text",
-            max_seq_length=max_seq_len,
-            neftune_noise_alpha=5.0,  # Mejora la generalización
-            dataset_num_proc=2,  # Procesamiento en paralelo
-            packing=use_packing,
-        )
-        
-        # Initialize trainer with SFTConfig
+        # Initialize trainer directly with parameters
         trainer = SFTTrainer(
             model=model,
             tokenizer=tok,
             train_dataset=train_ds,
             eval_dataset=eval_ds if eval_ds and len(eval_ds) > 0 else None,
             args=sft_args,
-            config=sft_config,
+            dataset_text_field="text",
+            max_seq_length=max_seq_len,
+            neftune_noise_alpha=5.0,  # Mejora la generalización
+            dataset_num_proc=2,  # Procesamiento en paralelo
+            packing=use_packing,
             callbacks=callbacks,
         )
         
