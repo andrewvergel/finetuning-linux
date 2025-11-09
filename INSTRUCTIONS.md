@@ -171,7 +171,7 @@ else:
 ### Paso 7) Instalación de Librerías de Machine Learning
 
 ```bash
-# Stack optimizado para RTX 4090
+# Stack optimizado para RTX 4060 Ti
 pip install transformers==4.35.2  # Versión más reciente
 pip install datasets==2.14.6
 pip install peft==0.6.0  # Versión actualizada
@@ -186,6 +186,80 @@ pip install xformers      # Para eficiencia de memoria
 pip install jupyterlab
 pip install matplotlib seaborn pandas numpy
 pip install tqdm tensorboard
+```
+
+### 🔧 SOLUCIÓN A ERRORES DE COMPATIBILIDAD
+
+**❌ PROBLEMA REAL: NumPy 2.x Incompatibilidad**
+
+```bash
+# Verificar versión de NumPy
+python -c "import numpy as np; print(f'NumPy version: {np.__version__}')"
+
+# SOLUCIÓN: Downgrade a NumPy 1.x (compatible con ML libraries)
+pip install "numpy<2.0"
+```
+
+**Después del downgrade de NumPy:**
+
+```bash
+# 1. Actualizar pyarrow a versión compatible
+pip install --upgrade pyarrow>=15.0.0
+
+# 2. Verificar instalación
+pip list | grep -E "(numpy|pyarrow|datasets)"
+
+# 3. Test de importación
+python -c "
+import numpy as np
+print(f'NumPy version: {np.__version__}')
+
+import pyarrow
+print(f'PyArrow version: {pyarrow.__version__}')
+
+import datasets
+print('✅ Todas las librerías compatibles')
+"
+```
+
+**✅ RESULTADO ESPERADO:**
+```
+✅ Todas las librerías importadas correctamente
+PyTorch: 2.8.0+cu128
+Transformers: 4.35.2
+Datasets: 2.14.6
+CUDA: True
+GPU: NVIDIA GeForce RTX 4060 Ti
+VRAM: 16.7GB
+```
+
+**Nota:** Los FutureWarnings sobre `_register_pytree_node` son normales y no afectan la funcionalidad.
+
+**Si persiste el problema, stack completo con versiones compatibles:**
+
+```bash
+# Reinstalar todo con versiones probadas
+pip uninstall -y numpy pyarrow pandas transformers datasets peft accelerate trl
+
+# Instalar NumPy 1.x primero
+pip install "numpy<2.0"
+
+# Instalar stack compatible
+pip install pyarrow==14.0.1
+pip install pandas==2.0.3
+pip install transformers==4.35.2
+pip install datasets==2.14.6
+pip install peft==0.6.0
+pip install accelerate==0.24.1
+pip install trl==0.7.6
+```
+
+**Error alternativo de dependencias de CUDA:**
+
+```bash
+# Si hay errores de CUDA con torch
+pip uninstall -y torch torchvision torchaudio
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
 ### Paso 8) Verificación Final del Entorno

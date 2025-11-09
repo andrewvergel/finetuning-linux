@@ -1,102 +1,180 @@
-import os, torch
+#!/usr/bin/env python3
+"""
+LoRA Fine-tuning Script for RTX 4060 Ti
+Version: 1.0.0
+Author: Auto-generated from INSTRUCTIONS.md
+Optimized for: RTX 4060 Ti (16GB VRAM)
+
+Changelog:
+- v1.0.0: Initial version with RTX 4060 Ti optimization
+"""
+
+import os
+import torch
+import json
+from datetime import datetime
 from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import LoraConfig, get_peft_model
+from trl import SFTTrainer, SFTConfig
 
-# Usar un modelo compatible con transformers 4.25.1
-MODEL_ID = "gpt2"  # Modelo alternativo compatible
-DATA_PATH = "data/instructions.jsonl"
-OUT_DIR = "out-tinyllama-lora"
+# Version information
+SCRIPT_VERSION = "1.0.0"
+SCRIPT_NAME = "finetune_lora.py"
 
-device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
-print(">> Device:", device)
+def log_version_info():
+    """Log script version and system information"""
+    print(f"🚀 {SCRIPT_NAME} v{SCRIPT_VERSION}")
+    print(f"📅 Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # System info
+    print(f"💻 PyTorch: {torch.__version__}")
+    print(f"🖥️ Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
+    if torch.cuda.is_available():
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+        print(f"📊 VRAM: {vram_gb:.1f}GB")
 
-# Carga dataset
-ds = load_dataset("json", data_files=DATA_PATH)["train"]
-print(f">> Dataset loaded: {len(ds)} examples")
+def get_device():
+    """Auto-detect device available"""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    else:
+        return torch.device("cpu")
 
-# Tokenizer + modelo base (usar GPT-2 que es compatible)
-tok = AutoTokenizer.from_pretrained(MODEL_ID)
-if tok.pad_token is None:
-    tok.pad_token = tok.eos_token
-print(f">> Tokenizer loaded, pad_token: {tok.pad_token}")
-
-model = AutoModelForCausalLM.from_pretrained(MODEL_ID)
-model.to(device)
-print(f">> Model loaded and moved to {device}")
-
-# Config LoRA
-peft_cfg = LoraConfig(
-    r=32, lora_alpha=32, lora_dropout=0.05,
-    target_modules=["c_attn"],  # target modules para GPT-2
-    bias="none", task_type="CAUSAL_LM",
-)
-
-model = get_peft_model(model, peft_cfg)
-
-# Preparar datos - formato compatible con Trainer
-def format_example(ex):
-    sys = ex.get("system","Eres un asistente útil y conciso.")
-    prompt = f"System: {sys}\nUser: {ex['input']}\nAssistant: {ex['output']}"
-    # Tokenizar con parámetros fijos para asegurar longitudes consistentes
-    encoded = tok(
-        prompt, 
-        return_tensors="pt", 
-        padding="max_length",     # PAD a max_length
-        truncation=True,          # TRUNCATE a max_length
-        max_length=256           # Longitud fija
+def main():
+    """Main fine-tuning function"""
+    # Version info
+    log_version_info()
+    
+    # Configuration
+    device = get_device()
+    print(f">> Device detectado: {device}")
+    if torch.cuda.is_available():
+        print(f">> GPU: {torch.cuda.get_device_name(0)}")
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+        print(f">> VRAM: {vram_gb:.1f}GB")
+    
+    # Model and paths
+    MODEL_ID = "microsoft/DialoGPT-medium"  # Optimized for RTX 4060 Ti
+    DATA_PATH = "data/instructions.jsonl"
+    OUT_DIR = "models/out-tinyllama-lora"
+    
+    # Check if data exists
+    if not os.path.exists(DATA_PATH):
+        print(f"❌ Error: {DATA_PATH} not found!")
+        print("Please create the dataset first using the instructions.")
+        return
+    
+    print(f">> Loading dataset from: {DATA_PATH}")
+    
+    # Cargar dataset
+    ds = load_dataset("json", data_files=DATA_PATH)["train"]
+    print(f">> Dataset loaded: {len(ds)} examples")
+    
+    # Tokenizer + modelo base
+    print(f">> Loading model: {MODEL_ID}")
+    tok = AutoTokenizer.from_pretrained(MODEL_ID)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+    print(">> Tokenizer loaded")
+    
+    # Load model with optimization for RTX 4060 Ti
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_ID,
+        torch_dtype=torch.float16,  # Use FP16 to save VRAM
+        device_map="auto",          # Automatic distribution
     )
-    input_ids = encoded["input_ids"][0]  # Remover batch dimension
-    attention_mask = encoded["attention_mask"][0]  # Remover batch dimension
+    model.to(device)
+    print(">> Model loaded to device")
     
-    # Para causal LM, los labels son los mismos que input_ids
-    labels = input_ids.clone()
+    # Configuración LoRA optimizada para RTX 4060 Ti
+    peft_cfg = LoraConfig(
+        r=32, lora_alpha=32, lora_dropout=0.05,
+        target_modules=["c_attn"],  # Adjust according to model
+        bias="none", task_type="CAUSAL_LM",
+    )
+    print(">> LoRA configuration set")
     
-    return {
-        "input_ids": input_ids.tolist(),  # Convertir a lista para compatibilidad con datasets
-        "attention_mask": attention_mask.tolist(),
-        "labels": labels.tolist()
+    model = get_peft_model(model, peft_cfg)
+    print(">> LoRA model ready")
+    
+    # Formateo de ejemplos
+    def format_example(ex):
+        sys = ex.get("system","Eres un asistente útil y conciso.")
+        prompt = f"System: {sys}\nUser: {ex['input']}\nAssistant: {ex['output']}"
+        return {"text": prompt}
+    
+    print(">> Formatting examples...")
+    ds = ds.map(format_example, remove_columns=ds.column_names)
+    
+    # Configuración optimizada para RTX 4060 Ti (16GB VRAM)
+    sft_args = SFTConfig(
+        output_dir=OUT_DIR,
+        per_device_train_batch_size=6,  # Adjusted for RTX 4060 Ti
+        gradient_accumulation_steps=4,
+        learning_rate=2e-4,
+        num_train_epochs=3,
+        logging_steps=10,
+        save_steps=500,
+        eval_strategy="no",
+        max_seq_length=2048,  # Takes advantage of 16GB VRAM
+        packing=True,
+        warmup_ratio=0.03,
+        dataloader_pin_memory=True,
+        report_to="tensorboard",
+        logging_dir="logs",
+        bf16=False,  # RTX 4060 Ti works better with FP16
+        tf32=True,   # TensorFloat-32 enabled
+        dataloader_num_workers=2,  # Optimized for RTX 4060 Ti
+    )
+    print(">> Training configuration set")
+    
+    # Initialize trainer
+    trainer = SFTTrainer(
+        model=model,
+        tokenizer=tok,
+        train_dataset=ds,
+        args=sft_args,
+        formatting_func=lambda ex: ex["text"],
+    )
+    print(">> Trainer initialized")
+    
+    # Create output directory
+    os.makedirs(OUT_DIR, exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
+    
+    # Entrenar modelo
+    print(">> Starting training...")
+    print(f"   - Batch size: {sft_args.per_device_train_batch_size}")
+    print(f"   - Gradient accumulation: {sft_args.gradient_accumulation_steps}")
+    print(f"   - Max sequence length: {sft_args.max_seq_length}")
+    print(f"   - Training epochs: {sft_args.num_train_epochs}")
+    
+    trainer.train()
+    
+    # Save model
+    print(">> Saving model...")
+    trainer.model.save_pretrained(OUT_DIR)
+    tok.save_pretrained(OUT_DIR)
+    
+    # Save training info
+    training_info = {
+        "script_version": SCRIPT_VERSION,
+        "model_id": MODEL_ID,
+        "dataset_size": len(ds),
+        "training_time": datetime.now().isoformat(),
+        "device": str(device),
+        "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
+        "vram_gb": round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1) if torch.cuda.is_available() else 0
     }
+    
+    with open(os.path.join(OUT_DIR, "training_info.json"), "w") as f:
+        json.dump(training_info, f, indent=2)
+    
+    print("✅ Adaptador LoRA guardado en:", OUT_DIR)
+    print("✅ Logs disponibles en:", "logs/")
+    print("✅ Training info saved to training_info.json")
+    print(f"🎉 Training completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-print(">> Processing dataset...")
-processed_ds = ds.map(format_example, remove_columns=ds.column_names)
-print(f">> Dataset after processing: {len(processed_ds)} examples")
-if len(processed_ds) > 0:
-    print(f">> First example keys: {list(processed_ds[0].keys())}")
-    print(f">> Input IDs length: {len(processed_ds[0]['input_ids'])}")
-    print(f">> Labels length: {len(processed_ds[0]['labels'])}")
-
-# No usar data_collator personalizado, dejar que Trainer maneje los datos ya procesados
-# Simplificar para usar el approach estándar de transformers
-
-# Configurar Trainer para manejar la tokenización y etiquetas
-training_args = TrainingArguments(
-    output_dir=OUT_DIR,
-    per_device_train_batch_size=4,          # Batch más grande para velocidad
-    gradient_accumulation_steps=2,          # Menos acumulación
-    learning_rate=1e-3,                     # Learning rate más alto
-    num_train_epochs=2,                     # Menos épocas para velocidad
-    logging_steps=50,                       # Logging menos frecuente
-    save_steps=100,                         # Guardar menos frecuentemente
-    evaluation_strategy="no",
-    warmup_ratio=0.03,                      # Warmup rápido
-    dataloader_pin_memory=False,
-    remove_unused_columns=False,  # Importante para mantener las columnas
-    logging_dir="./logs",               # Logs para monitorear
-    # Parámetros adicionales para mejor convergencia
-    weight_decay=0.01,                      # Regularización
-    adam_epsilon=1e-8,                     # Épsilon para Adam
-    max_grad_norm=1.0,                      # Clipping de gradientes
-)
-
-trainer = Trainer(
-    model=model,
-    tokenizer=tok,
-    train_dataset=processed_ds,
-    args=training_args,
-)
-
-trainer.train()
-trainer.model.save_pretrained(OUT_DIR)
-tok.save_pretrained(OUT_DIR)
-print("✅ Adaptador LoRA guardado en:", OUT_DIR)
+if __name__ == "__main__":
+    main()
