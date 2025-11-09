@@ -134,6 +134,8 @@ def main():
         train_dataset=ds,
         args=sft_args,
         formatting_func=lambda ex: ex["text"],
+        max_seq_length=2048,  # Add max_seq_length here instead of in TrainingArguments
+        packing=True,  # Add packing here instead of in TrainingArguments
     )
     print(">> Trainer initialized")
     
