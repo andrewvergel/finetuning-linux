@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 LoRA Fine-tuning Script for RTX 4060 Ti
-Version: 1.0.3
+Version: 1.0.4
 Author: Auto-generated from INSTRUCTIONS.md
 Optimized for: RTX 4060 Ti (16GB VRAM)
 
 Changelog:
+- v1.0.4: Enhanced training parameters for larger datasets, improved stability
 - v1.0.3: Fixed max_seq_length access error in training info display
 - v1.0.2: Fixed packing for small datasets (disable packing if < 10 examples)
 - v1.0.1: Fixed TRL compatibility for v0.7.4, added TF32 support
@@ -22,7 +23,7 @@ from peft import LoraConfig, get_peft_model
 from trl import SFTTrainer
 
 # Version information
-SCRIPT_VERSION = "1.0.2"
+SCRIPT_VERSION = "1.0.4"
 SCRIPT_NAME = "finetune_lora.py"
 
 def log_version_info():
@@ -114,31 +115,31 @@ def main():
     max_seq_len = 2048  # Store max sequence length as variable
     sft_args = TrainingArguments(
         output_dir=OUT_DIR,
-        per_device_train_batch_size=6,  # Adjusted for RTX 4060 Ti
-        gradient_accumulation_steps=4,
-        learning_rate=2e-4,
-        num_train_epochs=3,
+        per_device_train_batch_size=4,  # Reduced batch size for larger dataset
+        gradient_accumulation_steps=6,  # Increased for stable training
+        learning_rate=1e-4,  # Reduced learning rate for stability
+        num_train_epochs=5,  # Increased epochs for better learning
         logging_steps=10,
         save_steps=500,
-        evaluation_strategy="no",  # Changed from eval_strategy
-        warmup_ratio=0.03,
+        evaluation_strategy="no",
+        warmup_ratio=0.1,  # Increased warmup for larger dataset
         dataloader_pin_memory=True,
         report_to="tensorboard",
         logging_dir="logs",
-        fp16=True,  # Changed from bf16=False to fp16=True
-        dataloader_num_workers=2,  # Optimized for RTX 4060 Ti
-        tf32=True,  # Added TF32 support
+        fp16=True,
+        dataloader_num_workers=2,
+        tf32=True,
         # Removed invalid parameters: max_seq_length, packing
     )
     print(">> Training configuration set")
     
     # Initialize trainer
-    # Enable packing only if dataset has enough samples (minimum 10 for packing)
+    # Enable packing for larger dataset (20 examples should work well)
     use_packing = len(ds) >= 10
     if not use_packing:
         print(f">> Dataset has {len(ds)} examples - disabling packing for small dataset")
     else:
-        print(f">> Dataset has {len(ds)} examples - enabling packing")
+        print(f">> Dataset has {len(ds)} examples - enabling packing for better efficiency")
     
     trainer = SFTTrainer(
         model=model,
