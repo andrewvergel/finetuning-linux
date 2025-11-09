@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 LoRA Fine-tuning Script for RTX 4060 Ti
-Version: 1.0.4
+Version: 1.0.5
 Author: Auto-generated from INSTRUCTIONS.md
 Optimized for: RTX 4060 Ti (16GB VRAM)
 
 Changelog:
+- v1.0.5: Align max sequence length with model limits, guard packing for small contexts
 - v1.0.4: Enhanced training parameters for larger datasets, improved stability
 - v1.0.3: Fixed max_seq_length access error in training info display
 - v1.0.2: Fixed packing for small datasets (disable packing if < 10 examples)
@@ -23,7 +24,7 @@ from peft import LoraConfig, get_peft_model
 from trl import SFTTrainer
 
 # Version information
-SCRIPT_VERSION = "1.0.4"
+SCRIPT_VERSION = "1.0.5"
 SCRIPT_NAME = "finetune_lora.py"
 
 def log_version_info():
@@ -91,6 +92,17 @@ def main():
     model.to(device)
     print(">> Model loaded to device")
     
+    # Determine safe max sequence length based on model/tokenizer limits
+    model_context = getattr(model.config, "n_positions", None)
+    tokenizer_context = getattr(tok, "model_max_length", None)
+    default_context = 1024  # GPT-2 family default context size
+    candidate_contexts = [default_context]
+    for ctx in (model_context, tokenizer_context):
+        if ctx is not None and ctx > 0 and ctx != float("inf"):
+            candidate_contexts.append(int(ctx))
+    max_seq_len = min(candidate_contexts)
+    print(f">> Using max sequence length: {max_seq_len}")
+    
     # Configuración LoRA optimizada para RTX 4060 Ti
     peft_cfg = LoraConfig(
         r=32, lora_alpha=32, lora_dropout=0.05,
@@ -112,7 +124,6 @@ def main():
     ds = ds.map(format_example, remove_columns=ds.column_names)
     
     # Configuración optimizada para RTX 4060 Ti (16GB VRAM)
-    max_seq_len = 2048  # Store max sequence length as variable
     sft_args = TrainingArguments(
         output_dir=OUT_DIR,
         per_device_train_batch_size=4,  # Reduced batch size for larger dataset
@@ -134,12 +145,12 @@ def main():
     print(">> Training configuration set")
     
     # Initialize trainer
-    # Enable packing for larger dataset (20 examples should work well)
-    use_packing = len(ds) >= 10
-    if not use_packing:
-        print(f">> Dataset has {len(ds)} examples - disabling packing for small dataset")
-    else:
+    can_pack = len(ds) >= 40 and max_seq_len >= 2048
+    use_packing = bool(can_pack)
+    if use_packing:
         print(f">> Dataset has {len(ds)} examples - enabling packing for better efficiency")
+    else:
+        print(f">> Packing disabled (dataset={len(ds)}, max_seq_len={max_seq_len})")
     
     trainer = SFTTrainer(
         model=model,
