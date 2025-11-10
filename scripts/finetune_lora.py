@@ -358,10 +358,11 @@ def main():
     original_dataset_size = len(train_dataset)
     dataset_min_examples = int(os.getenv("FT_DATASET_MIN_EXAMPLES", "100"))
     
-    # For very small datasets (< 30 original examples), expand to at least 150 examples
+    # For very small datasets (< 30 original examples), expand to at least 200 examples
+    # More repetitions = more opportunities to memorize patterns
     if original_dataset_size < 30:
-        dataset_min_examples = max(dataset_min_examples, 150)
-        logging.info(">> Very small original dataset (%d examples) - expanding to at least %d examples for better learning", 
+        dataset_min_examples = max(dataset_min_examples, 200)
+        logging.info(">> Very small original dataset (%d examples) - expanding to at least %d examples for better memorization", 
                     original_dataset_size, dataset_min_examples)
     
     train_dataset = expand_dataset_if_needed(
@@ -394,25 +395,26 @@ def main():
     is_very_small_dataset = dataset_size < 150  # Very small datasets need even more aggressive settings
     
     if is_very_small_dataset:
-        logging.info("🔧 Very small dataset detected (%d examples) - applying aggressive hyperparameters for deep memorization", dataset_size)
+        logging.info("🔧 Very small dataset detected (%d examples) - applying ULTRA-AGGRESSIVE hyperparameters for deep memorization", dataset_size)
         
-        # Very aggressive learning rate for memorization (4.5e-5 to 5e-5)
+        # ULTRA-AGGRESSIVE learning rate for memorization (5e-5 to 6e-5)
+        # Higher LR is critical for memorizing specific patterns
         original_lr = training_config.learning_rate
-        if original_lr < 4.5e-5:
-            training_config.learning_rate = 4.5e-5
-            logging.info(f"  - Learning rate increased aggressively: {original_lr:.2e} -> {training_config.learning_rate:.2e}")
+        if original_lr < 5e-5:
+            training_config.learning_rate = 5e-5
+            logging.info(f"  - Learning rate increased ULTRA-AGGRESSIVELY: {original_lr:.2e} -> {training_config.learning_rate:.2e}")
         
-        # More epochs for very small datasets (10-12)
-        if training_config.num_train_epochs < 10:
+        # More epochs for very small datasets (12-15 for maximum memorization)
+        if training_config.num_train_epochs < 12:
             original_epochs = training_config.num_train_epochs
-            training_config.num_train_epochs = 10
-            logging.info(f"  - Epochs increased: {original_epochs} -> {training_config.num_train_epochs}")
+            training_config.num_train_epochs = 12
+            logging.info(f"  - Epochs increased significantly: {original_epochs} -> {training_config.num_train_epochs}")
         
-        # Minimal warmup for very small datasets (3% to start learning immediately)
-        if training_config.warmup_ratio > 0.03:
+        # Minimal warmup for very small datasets (2% to start learning immediately)
+        if training_config.warmup_ratio > 0.02:
             original_warmup = training_config.warmup_ratio
-            training_config.warmup_ratio = 0.03
-            logging.info(f"  - Warmup ratio reduced to minimum: {original_warmup} -> {training_config.warmup_ratio} (immediate learning)")
+            training_config.warmup_ratio = 0.02
+            logging.info(f"  - Warmup ratio reduced to absolute minimum: {original_warmup} -> {training_config.warmup_ratio} (immediate learning)")
         
         # Disable NEFTune completely for very small datasets (it interferes with memorization)
         if training_config.neftune_noise_alpha is not None and training_config.neftune_noise_alpha > 0:
@@ -420,19 +422,25 @@ def main():
             training_config.neftune_noise_alpha = None
             logging.info(f"  - NEFTune DISABLED: {original_neftune} -> None (maximize memorization)")
         
-        # Reduce weight decay for less regularization (allow more memorization)
-        if training_config.weight_decay > 0.005:
+        # Minimize weight decay for maximum memorization (almost no regularization)
+        if training_config.weight_decay > 0.001:
             original_wd = training_config.weight_decay
-            training_config.weight_decay = 0.005
-            logging.info(f"  - Weight decay reduced: {original_wd} -> {training_config.weight_decay} (less regularization)")
+            training_config.weight_decay = 0.001
+            logging.info(f"  - Weight decay minimized: {original_wd} -> {training_config.weight_decay} (maximum memorization)")
         
-        # Increase early stopping patience significantly
-        if training_config.early_stopping_patience < 10:
+        # Reduce LoRA dropout for better memorization (less regularization in LoRA layers)
+        if hasattr(model_config, 'lora_dropout') and model_config.lora_dropout > 0.01:
+            original_lora_dropout = model_config.lora_dropout
+            model_config.lora_dropout = 0.01
+            logging.info(f"  - LoRA dropout reduced: {original_lora_dropout} -> {model_config.lora_dropout} (better memorization)")
+        
+        # Increase early stopping patience significantly (allow more training)
+        if training_config.early_stopping_patience < 12:
             original_patience = training_config.early_stopping_patience
-            training_config.early_stopping_patience = 10
-            logging.info(f"  - Early stopping patience increased: {original_patience} -> {training_config.early_stopping_patience}")
+            training_config.early_stopping_patience = 12
+            logging.info(f"  - Early stopping patience increased significantly: {original_patience} -> {training_config.early_stopping_patience}")
         
-        logging.info("✅ Aggressive hyperparameters applied for very small dataset deep memorization")
+        logging.info("✅ ULTRA-AGGRESSIVE hyperparameters applied for very small dataset deep memorization")
         
     elif is_small_dataset:
         logging.info("🔧 Small dataset detected (%d examples) - adjusting hyperparameters for deeper learning", dataset_size)

@@ -75,9 +75,9 @@ BASE_MODEL_ID = env_str("FT_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
 ADAPTER_PATH = env_str("FT_OUT_DIR", "models/out-lora")
 
 # Generation settings
-DEFAULT_SYSTEM_PROMPT = env_str("INF_SYSTEM_PROMPT", "Eres un asistente profesional y conciso.")
+DEFAULT_SYSTEM_PROMPT = env_str("INF_SYSTEM_PROMPT", "You are a professional and concise assistant.")
 DEFAULT_TEST_PROMPT = env_str(
-    "INF_TEST_PROMPT", "Dame un checklist de conciliación de pagos de los lunes."
+    "INF_TEST_PROMPT", "Give me a checklist for Monday payment reconciliation."
 )
 
 # Token limits - Match with training script
@@ -314,7 +314,7 @@ def chat(user, system=DEFAULT_SYSTEM_PROMPT, model=None, tok=None, device=None):
         # Clean up any remaining special tokens or artifacts
         response = response.replace("<|im_end|>", "").replace("<|endoftext|>", "").strip()
         
-        print("\nRespuesta:", response)
+        print("\nResponse:", response)
         return response
         
     except Exception as e:
@@ -333,14 +333,14 @@ def interactive_chat(model, tok, device):
     
     while True:
         try:
-            user_input = input("\n👤 Usuario: ").strip()
+            user_input = input("\n👤 User: ").strip()
             
             if user_input.lower() in ['quit', 'exit', 'salir']:
-                print("👋 ¡Hasta luego!")
+                print("👋 Goodbye!")
                 break
             elif user_input.lower() == 'help':
                 print("""
-📚 Comandos disponibles:
+📚 Available commands:
 - normal text: Ask any question
 - system <text>: Change system prompt
 - clear: Clear conversation
@@ -381,7 +381,7 @@ def main():
     
     # Auto-detect device
     device = get_device()
-    print(f">> Device detectado: {device}")
+    print(f">> Device detected: {device}")
     
     # Load model and tokenizer
     model, tok, adapter_path = load_model_and_tokenizer()
@@ -402,7 +402,7 @@ def main():
     # Test query
     print("\n🧪 Testing with default query...")
     test_query = DEFAULT_TEST_PROMPT
-    print(f"👤 Usuario: {test_query}")
+    print(f"👤 User: {test_query}")
     chat(test_query, model=model, tok=tok, device=device)
     
     # Ask if user wants interactive chat
@@ -410,7 +410,7 @@ def main():
         interactive_chat(model, tok, device)
         return
 
-    print(f"\n❓ ¿Quieres iniciar chat interactivo? (y/n): ", end="")
+    print(f"\n❓ Do you want to start interactive chat? (y/n): ", end="")
     try:
         choice = input().strip().lower()
         if choice in {'y', 'yes', 'sí', 's', ''}:
