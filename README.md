@@ -1,11 +1,17 @@
 # Fine-tuning LoRA en Ubuntu + RTX 4060 Ti
 
-> Proyecto personal documentado como parte de mi portafolio. Implementa un flujo completo de fine-tuning con LoRA sobre DialoGPT usando CUDA en Ubuntu, incluyendo preparación del entorno, entrenamiento reproducible y despliegue de inferencia.
+> Proyecto personal documentado como parte de mi portafolio. Implementa un flujo completo de fine-tuning con LoRA/QLoRA sobre modelos modernos (Qwen2.5-7B-Instruct) usando CUDA en Ubuntu, incluyendo preparación del entorno, entrenamiento reproducible y despliegue de inferencia.
 
 ## ✨ Resumen del Proyecto
-- **Objetivo:** entrenar un chatbot corporativo capaz de responder procedimientos internos a partir de un dataset de instrucciones propio.
-- **Tecnologías:** Python, PyTorch 2.8, Transformers 4.35, TRL 0.7, LoRA (PEFT), CUDA 12.1.
-- **Hardware:** NVIDIA RTX 4060 Ti (16 GB VRAM) en Ubuntu 22.04.
+- **Objetivo:** Entrenar un chatbot corporativo capaz de responder procedimientos internos a partir de un dataset de instrucciones propio.
+- **Tecnologías:** Python, PyTorch 2.0+, Transformers 4.40+, PEFT 0.10+, TRL, CUDA 12.1+.
+- **Hardware:** NVIDIA RTX 4060 Ti (16 GB VRAM) en Ubuntu 22.04+.
+- **Características destacadas:**
+  - Soporte para QLoRA 4-bit (optimización de memoria)
+  - Entrenamiento estable con bfloat16
+  - Gradient Checkpointing y optimizaciones de memoria
+  - Early Stopping y evaluación por pasos
+  - Packing de secuencias opcional
 - **Repositorio:** [`andrewvergel/finetuning-linux`](https://github.com/andrewvergel/finetuning-linux)
 
 ## 🧱 Arquitectura y Flujo
@@ -25,10 +31,13 @@ cd finetuning-linux
 python3 -m venv .venv
 source .venv/bin/activate
 
-# 3. Actualizar pip e instalar dependencias
+# 3. Instalar dependencias base
 pip install --upgrade pip setuptools wheel
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# 4. Instalar dependencias del proyecto
 pip install "numpy<2.0" pyarrow==14.0.1
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,expandable_segments:True
 pip install -r requirements.txt
 ```
 > 💡 Si partes de un servidor recién formateado, instala previamente los drivers NVIDIA, CUDA 12.1 y utilidades del sistema (detallado en secciones posteriores del repositorio original).
@@ -48,41 +57,75 @@ JSONL
 ```
 > ℹ️ `data/instructions.jsonl` **ya viene versionado en este repositorio** y es el único archivo permitido dentro de `data/`. El script de entrenamiento duplica automáticamente el dataset si detecta menos de 200 muestras, pero se recomienda ampliarlo manualmente con más casuísticas para mejorar la diversidad de respuestas.
 
-## 🛠️ Script de Entrenamiento (`scripts/finetune_lora.py`)
-- Basado en LoRA (r=32) sobre las capas `c_attn` y `c_proj` de DialoGPT-medium (ajustable por constantes).
-- El entrenamiento usa por defecto `data/instructions.jsonl` (puedes sobreescribirlo con la variable `FINETUNE_DATA_PATH`).
-- Base por defecto: `Qwen/Qwen2.5-7B-Instruct` (activando `FT_TRUST_REMOTE_CODE=1` en `.env`).
-- Entrenamiento altamente regularizado: batch efectivo 32 (4×8), 8 épocas, scheduler `cosine` (warmup 15%) y weight decay 0.01.
-- Genera `training_info.json` con metadatos y deja un log detallado en `logs/debug_last_run.log`.
-- Reserva automáticamente 15% para validación, corre evaluación al final de cada época y guarda el mejor checkpoint según `eval_loss`.
-- Ejecuta una evaluación rápida al final tomando 12 ejemplos del split de validación (o un fallback predefinido) y deja la comparación esperada/obtenida en el log.
-- Soporta variables de entorno (`FT_*`). Puedes crear un `.env` en la raíz con los valores que necesites.
+## 🛠️ Script de Entrenamiento (`scripts/finetune_lora.py` v1.2.0)
 
-### 🧾 Ejemplo de `.env`
+### Características Principales
+- **Modelo Base:** `Qwen/Qwen2.5-7B-Instruct` por defecto (soporta cualquier modelo compatible con Transformers)
+- **Optimizaciones de Memoria:**
+  - QLoRA 4-bit activable vía `FT_USE_QLORA=1`
+  - Gradient Checkpointing
+  - bfloat16 por defecto (óptimo para GPUs Ada/Lovelace)
+  - Packing de secuencias opcional (`FT_FORCE_PACKING`)
+- **Entrenamiento Estable:**
+  - Early Stopping basado en pérdida de validación
+  - Evaluación por pasos configurables (`FT_EVAL_STEPS`)
+  - Guardado de checkpoints incremental
+  - Logs detallados en `logs/debug_last_run.log`
+- **Configuración Flexible:**
+  - Todas las opciones configurables mediante variables de entorno `FT_*`
+  - Soporte para múltiples objetivos LoRA
+  - Batch size y acumulación de gradientes configurables
+
+### Flujo de Entrenamiento
+1. Carga y validación del dataset desde `data/instructions.jsonl`
+2. División automática entrenamiento/validación (85/15% por defecto)
+3. Carga del modelo base con optimizaciones de memoria
+4. Aplicación de LoRA/QLoRA según configuración
+5. Entrenamiento con monitoreo de métricas
+6. Evaluación periódica y guardado de checkpoints
+7. Generación de informe final con ejemplos de inferencia
+
+### 🧾 Configuración Recomendada (`.env`)
+
 ```bash
-FT_MODEL_ID=microsoft/DialoGPT-medium
+# Modelo y Datos
+FT_MODEL_ID=Qwen/Qwen2.5-7B-Instruct
 FT_DATA_PATH=data/instructions.jsonl
-FT_OUT_DIR=models/out-tinyllama-lora
-FT_DATASET_MIN_EXAMPLES=240
+FT_OUT_DIR=models/out-qlora
+FT_TRUST_REMOTE_CODE=1  # Requerido para Qwen2.5
+
+# Optimización de Memoria
+FT_USE_QLORA=1           # Activar QLoRA 4-bit
+FT_FORCE_PACKING=0       # Desactivar packing por defecto (más memoria)
+FT_GRADIENT_CHECKPOINTING=1
+
+# Hiperparámetros de Entrenamiento
 FT_PER_DEVICE_BATCH_SIZE=1
-FT_GRADIENT_ACCUMULATION=12
-FT_NUM_EPOCHS=12
+FT_GRADIENT_ACCUMULATION=8
+FT_NUM_EPOCHS=5
 FT_LEARNING_RATE=2e-5
 FT_WARMUP_RATIO=0.1
-FT_LR_SCHEDULER=linear
-FT_WEIGHT_DECAY=0.1
-FT_LORA_RANK=32
-FT_LORA_ALPHA=32
-FT_LORA_DROPOUT=0.3
-FT_LORA_TARGET_MODULES=c_attn,c_proj
-FT_LOGGING_STEPS=5
-FT_SAVE_STRATEGY=epoch
-FT_SAVE_TOTAL_LIMIT=3
+FT_LR_SCHEDULER=cosine_with_restarts
+FT_WEIGHT_DECAY=0.02
+
+# Configuración LoRA
+FT_LORA_RANK=8
+FT_LORA_ALPHA=16
+FT_LORA_DROPOUT=0.05
+FT_LORA_TARGET_MODULES=q_proj,v_proj
+
+# Validación y Guardado
+FT_EVAL_STEPS=25
+FT_SAVE_STEPS=25
+FT_SAVE_TOTAL_LIMIT=2
+FT_EVAL_MAX_NEW_TOKENS=128
+FT_EVAL_SAMPLE_SIZE=3
+
+# Otros
+FT_LOGGING_STEPS=10
 FT_DATASET_SHUFFLE_SEED=42
-FT_VALIDATION_SPLIT=0.2
+FT_VALIDATION_SPLIT=0.15
 FT_DEBUG_LOG_FILE=debug_last_run.log
-FT_EVAL_MAX_NEW_TOKENS=220
-FT_EVAL_SAMPLE_SIZE=10
 ```
 > Duplica el archivo como `.env` y personaliza los valores si necesitas cambiar cualquier hiperparámetro sin editar el script.
 
@@ -107,15 +150,35 @@ FT_EVAL_SAMPLE_SIZE=10
 - `eval_loss` debe bajar de forma consistente (ej.: 7.8 → 6.9 entre época 1 y 3).
 - `loss` de entrenamiento entre 7.0–8.5 al inicio, bajando gradualmente.
 
-### 📊 Guía rápida de hiperparámetros
-- `DATASET_MIN_EXAMPLES = 240` → número mínimo de muestras tras repetir el split de entrenamiento. *Subirlo* (300) añade más iteraciones; *bajarlo* (180) cuando agregues más ejemplos únicos.
-- `PER_DEVICE_BATCH_SIZE = 4` → muestras procesadas por GPU antes de acumular gradientes. Con QLoRA 4-bit el consumo de VRAM se mantiene estable. *Subirlo* (6) si dispones de más VRAM; *bajarlo* (2) para margen extra.
-- `GRADIENT_ACCUMULATION = 8` → batch efectivo 32 (4×8). *Subirlo* (10) suaviza más los gradientes; *bajarlo* (6) acelera cuando agregues más datos.
-- `NUM_EPOCHS = 8` → con repetición 12× cada muestra se ve unas 2 880 veces. *Subirlo* (10) si el `eval_loss` mejora; *bajarlo* (6) cuando amplíes el dataset.
-- `LEARNING_RATE = 1e-4` → LR recomendado por Qwen para LoRA. *Subirlo* (1.2e-4) si el loss se estanca; *bajarlo* (8e-5) si la validación oscila.
-- `WARMUP_RATIO = 0.15` → arranque suave (~15% de los pasos). *Subirlo* (0.2) si el loss inicial explota; *bajarlo* (0.1) cuando uses LR menores.
-- `LORA_DROPOUT = 0.15` → regularización sobre capas adaptadas. *Subirlo* (0.2) si aún repite; *bajarlo* (0.1) cuando tengas más ejemplos únicos.
-- `EVAL_SAMPLE_SIZE = 10` → cantidad de ejemplos del split de validación usados en la evaluación rápida.
+### 🎯 Guía de Ajuste de Hiperparámetros
+
+#### Optimización de Memoria (RTX 4060 Ti 16GB)
+- **`FT_USE_QLORA` (1):** Activa cuantización 4-bit (recomendado para modelos >7B)
+- **`FT_PER_DEVICE_BATCH_SIZE` (1):** Mantener en 1 para máxima estabilidad
+- **`FT_GRADIENT_ACCUMULATION` (8):** Ajustar según VRAM disponible (más alto = mejor uso de GPU)
+- **`FT_FORCE_PACKING` (0):** Desactivado por defecto (usa más memoria pero más estable)
+
+#### Rendimiento del Entrenamiento
+- **`FT_LORA_RANK` (8):** Dimensión de las matrices de bajo rango
+  - *Aumentar* (16-32) para tareas complejas
+  - *Reducir* (4-8) si hay problemas de memoria
+- **`FT_LEARNING_RATE` (2e-5):** Tasa de aprendizaje base
+  - *Aumentar* (3e-5) si la pérdida se estanca
+  - *Reducir* (1e-5) si la pérdida es inestable
+- **`FT_LORA_ALPHA` (16):** Factor de escalado (normalmente 2× rank)
+
+#### Regularización
+- **`FT_LORA_DROPOUT` (0.05):** Regularización para evitar sobreajuste
+  - *Aumentar* (0.1-0.2) si el modelo memoriza
+  - *Reducir* (0.01) si el aprendizaje es lento
+- **`FT_WEIGHT_DECAY` (0.02):** Decaimiento de pesos
+  - *Aumentar* (0.05) para más regularización
+  - *Reducir* (0.01) si el modelo no converge
+
+#### Evaluación
+- **`FT_EVAL_STEPS` (25):** Frecuencia de evaluación
+- **`FT_EVAL_SAMPLE_SIZE` (3):** Número de ejemplos para evaluación rápida
+- **`FT_EVAL_MAX_NEW_TOKENS` (128):** Longitud máxima de generación en evaluación
 
 ## 💬 Script de Inferencia (`scripts/inference_lora.py`)
 - Carga el adaptador LoRA desde `models/out-tinyllama-lora`.
@@ -137,11 +200,19 @@ python scripts/inference_lora.py
 finetuning-linux/
 ├── data/
 │   └── instructions.jsonl           # Dataset versionado
+├── logs/
+│   └── debug_last_run.log          # Log detallado del último entrenamiento
 ├── models/                          # Salidas de entrenamiento (ignorado en git)
+│   └── out-qlora/                  # Checkpoints del modelo
+│       ├── adapter_model.bin       # Pesos del adaptador LoRA
+│       ├── config.json             # Configuración del modelo
+│       └── training_info.json      # Métricas y metadatos
 ├── scripts/
-│   ├── finetune_lora.py             # Entrenamiento LoRA (v1.1.1)
-│   ├── inference_lora.py            # Inferencia determinista (v1.0.2)
-│   └── validate_environment.py      # Checklist opcional de diagnóstico
+│   ├── finetune_lora.py            # Entrenamiento LoRA/QLoRA (v1.2.0)
+│   ├── inference_lora.py           # Inferencia con adaptadores
+│   ├── merge_adapter.py            # Fusión de adaptadores con el modelo base
+│   └── validate_environment.py     # Verificación del entorno
+├── .env.example                    # Plantilla de configuración
 ├── .gitignore
-└── README.md (este documento)
+└── README.md                       # Este documento
 ```
