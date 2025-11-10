@@ -125,14 +125,14 @@ MAX_SEQ_LEN_OVERRIDE = env_int("FT_MAX_SEQ_LEN", 512)  # Keep at 512 for memory 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:True"
 
 # Training parameters
-NUM_EPOCHS = env_int("FT_NUM_EPOCHS", 5)  # Reduced epochs for faster iteration
-LEARNING_RATE = env_float("FT_LEARNING_RATE", 2e-5)  # Lower learning rate for stability
+NUM_EPOCHS = env_int("FT_NUM_EPOCHS",8)  # Reduced epochs for faster iteration
+LEARNING_RATE = env_float("FT_LEARNING_RATE", 1.5e-5)  # Lower learning rate for stability
 WARMUP_RATIO = env_float("FT_WARMUP_RATIO", 0.1)  # Keep 10% warmup steps
 LR_SCHEDULER = env_str("FT_LR_SCHEDULER", "cosine_with_restarts")  # Better convergence
 WEIGHT_DECAY = env_float("FT_WEIGHT_DECAY", 0.02)  # Slightly higher for better regularization
 
 # LoRA parameters - balanced for performance and memory
-LORA_RANK = env_int("FT_LORA_RANK", 8)  # Increased rank for better learning
+LORA_RANK = env_int("FT_LORA_RANK", 16)  # Increased rank for better learning
 LORA_ALPHA = env_int("FT_LORA_ALPHA", 16)  # Alpha = 2*rank for stability
 LORA_DROPOUT = env_float("FT_LORA_DROPOUT", 0.05)  # Slight dropout for regularization
 # Target key layers for efficient fine-tuning
