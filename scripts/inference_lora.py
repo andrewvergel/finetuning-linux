@@ -245,32 +245,37 @@ def chat(user, system=DEFAULT_SYSTEM_PROMPT, model=None, tok=None, device=None):
             return_token_type_ids=False
         ).to(device)
         
-        # Generate with same settings as training
-        with torch.no_grad():
-            gen = model.generate(
-                input_ids=ids.input_ids,
-                attention_mask=ids.attention_mask,
-                max_new_tokens=MAX_NEW_TOKENS,
-                do_sample=DO_SAMPLE,
-                temperature=TEMPERATURE,
-                top_p=TOP_P,
-                pad_token_id=tok.eos_token_id,
-                eos_token_id=tok.eos_token_id,
-                use_cache=True,
-                repetition_penalty=REPETITION_PENALTY,
-                num_beams=1,  # Disable beam search for faster inference
-                do_early_stopping=True,
-            )
+        # Generate response with Qwen2.5 compatible settings
+        gen = model.generate(
+            input_ids=ids.input_ids,
+            attention_mask=ids.attention_mask,
+            do_sample=DO_SAMPLE,
+            temperature=TEMPERATURE if DO_SAMPLE else 1.0,  # Only apply temperature when sampling
+            top_p=TOP_P if DO_SAMPLE else 1.0,  # Only apply top_p when sampling
+            max_new_tokens=MAX_NEW_TOKENS,
+            repetition_penalty=REPETITION_PENALTY,
+            eos_token_id=tok.eos_token_id,
+            pad_token_id=tok.pad_token_id,
+            use_cache=True,
+            return_dict_in_generate=True,
+            output_scores=False,
+            output_attentions=False,
+            output_hidden_states=False
+        )
         
-        # Decode and clean up response
-        response = tok.decode(gen[0][ids.input_ids.shape[1]:], skip_special_tokens=True)
-        response = response.split("\n")[0].strip()  # Take only the first line of response
+        # Decode and clean up the response
+        if hasattr(gen, 'sequences'):
+            response = tok.decode(gen.sequences[0], skip_special_tokens=True)
+        else:
+            response = tok.decode(gen[0], skip_special_tokens=True)
+        # Remove the input prompt from the response
+        response = response.replace(prompt, '').strip()  # Take only the first line of response
         
-        print("\n🤖 Respuesta:", response)
+        print("\n Respuesta:", response)
         return response
         
     except Exception as e:
-        print(f"❌ Error during generation: {e}")
+        print(f" Error during generation: {e}")
         import traceback
         traceback.print_exc()
         return None
