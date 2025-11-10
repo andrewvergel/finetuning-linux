@@ -116,44 +116,48 @@ DATA_PATH = env_str("FT_DATA_PATH", "data/instructions.jsonl")
 OUT_DIR = env_str("FT_OUT_DIR", "models/out-lora")
 
 # Memory optimization parameters
-DATASET_MIN_EXAMPLES = env_int("FT_DATASET_MIN_EXAMPLES", 240)
-PER_DEVICE_BATCH_SIZE = env_int("FT_PER_DEVICE_BATCH_SIZE", 1)  # Minimal batch size
-GRADIENT_ACCUMULATION = env_int("FT_GRADIENT_ACCUMULATION", 32)  # Increased to 32
-MAX_SEQ_LEN_OVERRIDE = env_int("FT_MAX_SEQ_LEN", 512)  # Further reduced to 512
+DATASET_MIN_EXAMPLES = env_int("FT_DATASET_MIN_EXAMPLES", 100)  # Reduced minimum dataset size
+PER_DEVICE_BATCH_SIZE = env_int("FT_PER_DEVICE_BATCH_SIZE", 1)  # Keep at 1 for VRAM efficiency
+GRADIENT_ACCUMULATION = env_int("FT_GRADIENT_ACCUMULATION", 8)  # Reduced for more frequent updates
+MAX_SEQ_LEN_OVERRIDE = env_int("FT_MAX_SEQ_LEN", 512)  # Keep at 512 for memory efficiency
 
 # Enable memory optimizations
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:True"
 
 # Training parameters
-NUM_EPOCHS = env_int("FT_NUM_EPOCHS", 8)
-LEARNING_RATE = env_float("FT_LEARNING_RATE", 2e-4)  # Slightly increased for better convergence with smaller batch
-WARMUP_RATIO = env_float("FT_WARMUP_RATIO", 0.1)  # Reduced warmup
-LR_SCHEDULER = env_str("FT_LR_SCHEDULER", "cosine")
-WEIGHT_DECAY = env_float("FT_WEIGHT_DECAY", 0.01)
+NUM_EPOCHS = env_int("FT_NUM_EPOCHS", 5)  # Reduced epochs for faster iteration
+LEARNING_RATE = env_float("FT_LEARNING_RATE", 2e-5)  # Lower learning rate for stability
+WARMUP_RATIO = env_float("FT_WARMUP_RATIO", 0.1)  # Keep 10% warmup steps
+LR_SCHEDULER = env_str("FT_LR_SCHEDULER", "cosine_with_restarts")  # Better convergence
+WEIGHT_DECAY = env_float("FT_WEIGHT_DECAY", 0.02)  # Slightly higher for better regularization
 
-# LoRA parameters - optimized for memory efficiency
-LORA_RANK = env_int("FT_LORA_RANK", 4)  # Further reduced rank
-LORA_ALPHA = env_int("FT_LORA_ALPHA", 8)  # Further reduced alpha
-LORA_DROPOUT = env_float("FT_LORA_DROPOUT", 0.01)  # Minimal dropout
-# Target only query layers to save memory (most important for learning)
-LORA_TARGET_MODULES = env_list("FT_LORA_TARGET_MODULES", ["q_proj"])
+# LoRA parameters - balanced for performance and memory
+LORA_RANK = env_int("FT_LORA_RANK", 8)  # Increased rank for better learning
+LORA_ALPHA = env_int("FT_LORA_ALPHA", 16)  # Alpha = 2*rank for stability
+LORA_DROPOUT = env_float("FT_LORA_DROPOUT", 0.05)  # Slight dropout for regularization
+# Target key layers for efficient fine-tuning
+LORA_TARGET_MODULES = env_list("FT_LORA_TARGET_MODULES", ["q_proj", "v_proj"])  # Added v_proj
 
 # Training configuration
-LOGGING_STEPS = env_int("FT_LOGGING_STEPS", 10)
+LOGGING_STEPS = env_int("FT_LOGGING_STEPS", 10)  # Log every 10 steps
 SAVE_STRATEGY = env_str("FT_SAVE_STRATEGY", "steps")
-SAVE_TOTAL_LIMIT = env_int("FT_SAVE_TOTAL_LIMIT", 2)
+SAVE_TOTAL_LIMIT = env_int("FT_SAVE_TOTAL_LIMIT", 2)  # Keep last 2 checkpoints
 DATASET_SHUFFLE_SEED = env_int("FT_DATASET_SHUFFLE_SEED", 42)
-VALIDATION_SPLIT = env_float("FT_VALIDATION_SPLIT", 0.2)
+VALIDATION_SPLIT = env_float("FT_VALIDATION_SPLIT", 0.15)  # Slightly less validation data
 DEBUG_LOG_FILE = env_str("FT_DEBUG_LOG_FILE", "debug_last_run.log")
-EVAL_MAX_NEW_TOKENS = env_int("FT_EVAL_MAX_NEW_TOKENS", 128)  # Reduced for evaluation
-EVAL_SAMPLE_SIZE = env_int("FT_EVAL_SAMPLE_SIZE", 5)  # Reduced samples for evaluation
-EVAL_STEPS = env_int("FT_EVAL_STEPS", 50)  # Evaluate more frequently
-SAVE_STEPS = env_int("FT_SAVE_STEPS", 50)  # Save more frequently
+EVAL_MAX_NEW_TOKENS = env_int("FT_EVAL_MAX_NEW_TOKENS", 128)  # Keep reasonable for evaluation
+EVAL_SAMPLE_SIZE = env_int("FT_EVAL_SAMPLE_SIZE", 3)  # Fewer samples to save VRAM
+EVAL_STEPS = env_int("FT_EVAL_STEPS", 25)  # Evaluate more frequently
+SAVE_STEPS = env_int("FT_SAVE_STEPS", 25)  # Save more frequently
 
 # Memory optimization flags
-FORCE_PACKING = env_bool("FT_FORCE_PACKING", False)  # Disabled to save memory
+FORCE_PACKING = env_bool("FT_FORCE_PACKING", False)  # Keep disabled for VRAM efficiency
 USE_QLORA = env_bool("FT_USE_QLORA", True)  # Enable QLoRA for 4-bit quantization
-TRUST_REMOTE_CODE = env_bool("FT_TRUST_REMOTE_CODE", True)
+TRUST_REMOTE_CODE = env_bool("FT_TRUST_REMOTE_CODE", True)  # Required for some models
+
+# Enable memory optimizations
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:True"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # For better error messages
 
 # Hardening/ruido
 os.environ.setdefault("TOKENIZERS_PARALLELISM", os.getenv("TOKENIZERS_PARALLELISM", "false"))
