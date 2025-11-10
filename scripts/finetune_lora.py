@@ -175,7 +175,7 @@ def expand_dataset_if_needed(dataset: Dataset, min_examples: int, seed: int = 42
     repeat_factor = max(1, math.ceil(min_examples / len(dataset)))
     expanded = concatenate_datasets([dataset] * repeat_factor).shuffle(seed=seed)
     logging.info(
-        ">> Training dataset expanded: %dx -> %d ejemplos", repeat_factor, len(expanded)
+        ">> Training dataset expanded: %dx -> %d examples", repeat_factor, len(expanded)
     )
     return expanded
 
@@ -238,7 +238,7 @@ def should_use_packing(
 
     if len(dataset) < min_examples:
         logging.warning(
-            "Packing forzado deshabilitado: dataset muy pequeño (%d < %d ejemplos)",
+            "Forced packing disabled: dataset too small (%d < %d examples)",
             len(dataset),
             min_examples,
         )
@@ -246,7 +246,7 @@ def should_use_packing(
 
     if stats["approx_total_tokens"] < min_tokens_for_packing:
         logging.warning(
-            "Packing forzado deshabilitado: tokens estimados insuficientes (%.0f < %d)",
+            "Forced packing disabled: insufficient estimated tokens (%.0f < %d)",
             stats["approx_total_tokens"],
             min_tokens_for_packing,
         )
@@ -276,7 +276,7 @@ def main():
 
     # Get device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logging.info(">> Device detectado: %s", device)
+    logging.info(">> Device detected: %s", device)
 
     # Validate dataset exists
     if not Path(data_config.train_path).exists():
@@ -369,23 +369,23 @@ def main():
     stats = calculate_dataset_stats(train_dataset, tokenizer, max_seq_len)
 
     # Log dataset statistics
-    logging.info("📊 Estadísticas del dataset:")
-    logging.info(f"  - Ejemplos: {stats['total_examples']}")
+    logging.info("📊 Dataset statistics:")
+    logging.info(f"  - Examples: {stats['total_examples']}")
     logging.info(
-        f"  - Tokens/ejemplo: {stats['avg_tokens']:.1f} "
+        f"  - Tokens/example: {stats['avg_tokens']:.1f} "
         f"(min: {stats['min_tokens']}, max: {stats['max_tokens']})"
     )
-    logging.info(f"  - Caracteres/ejemplo: {stats['avg_chars']:.1f}")
-    logging.info(f"  - Tokens totales estimados: {stats['approx_total_tokens']:,.0f}")
+    logging.info(f"  - Characters/example: {stats['avg_chars']:.1f}")
+    logging.info(f"  - Estimated total tokens: {stats['approx_total_tokens']:,.0f}")
 
     # Determine if packing should be used
     force_packing = bool(os.getenv("FT_FORCE_PACKING", "false").lower() in ("true", "1", "yes"))
     use_packing = should_use_packing(train_dataset, stats, max_seq_len, force_packing)
-    logging.info(f"  - Packing: {'HABILITADO' if use_packing else 'DESHABILITADO'}")
+    logging.info(f"  - Packing: {'ENABLED' if use_packing else 'DISABLED'}")
 
     if stats["max_tokens"] > max_seq_len * 0.9:
         logging.warning(
-            "¡Atención! Algunos ejemplos están cerca del límite de contexto (%d tokens)",
+            "⚠️  Warning! Some examples are close to the context limit (%d tokens)",
             max_seq_len,
         )
 
@@ -504,7 +504,7 @@ def main():
         raise ValueError(f"Tokenizer test failed - this will cause training to fail: {e}") from e
 
     # Initialize SFTTrainer
-    logging.info("🚀 Inicializando SFTTrainer...")
+    logging.info("🚀 Initializing SFTTrainer...")
     logging.info(f">> Packing: {use_packing}")
     logging.info(f">> Dataset text field: {training_config.dataset_text_field}")
     logging.info(f">> Max sequence length: {max_seq_len}")
@@ -556,33 +556,33 @@ def main():
 
     # Log configuration summary
     logging.info("\n" + "=" * 80)
-    logging.info("🚀 INICIANDO ENTRENAMIENTO")
+    logging.info("🚀 STARTING TRAINING")
     logging.info("=" * 80)
-    logging.info("📋 Configuración:")
-    logging.info(f"   - Modelo: {model_config.model_name_or_path}")
+    logging.info("📋 Configuration:")
+    logging.info(f"   - Model: {model_config.model_name_or_path}")
     logging.info(
         f"   - Batch size: {training_args.per_device_train_batch_size} "
         f"(x{training_args.gradient_accumulation_steps})"
     )
-    logging.info(f"   - Longitud máxima: {max_seq_len} tokens")
-    logging.info(f"   - Épocas: {training_args.num_train_epochs}")
+    logging.info(f"   - Max length: {max_seq_len} tokens")
+    logging.info(f"   - Epochs: {training_args.num_train_epochs}")
     logging.info(
-        f"   - Tamaño del dataset: {len(train_dataset)} entrenamiento, "
-        f"{len(eval_dataset) if eval_dataset else 0} validación"
+        f"   - Dataset size: {len(train_dataset)} training, "
+        f"{len(eval_dataset) if eval_dataset else 0} validation"
     )
     logging.info(f"   - Learning rate: {training_args.learning_rate}")
-    logging.info(f"   - Peso de decaimiento: {training_args.weight_decay}")
+    logging.info(f"   - Weight decay: {training_args.weight_decay}")
     logging.info(
         f"   - LoRA r={model_config.lora_rank}, alpha={model_config.lora_alpha}, "
         f"dropout={model_config.lora_dropout}"
     )
-    logging.info(f"   - QLoRA: {'Sí' if model_config.load_in_4bit else 'No'}")
-    logging.info(f"   - Packing: {'Sí' if use_packing else 'No'}")
+    logging.info(f"   - QLoRA: {'Yes' if model_config.load_in_4bit else 'No'}")
+    logging.info(f"   - Packing: {'Yes' if use_packing else 'No'}")
     logging.info("=" * 80 + "\n")
 
     # Training with error handling
     try:
-        logging.info("🏋️ Iniciando entrenamiento...")
+        logging.info("🏋️ Starting training...")
         train_result = trainer.train()
 
         # Save training metrics
@@ -592,7 +592,7 @@ def main():
         # Final evaluation
         eval_metrics = {}
         if eval_dataset and len(eval_dataset) > 0:
-            logging.info("📊 Evaluando modelo final...")
+            logging.info("📊 Evaluating final model...")
             eval_metrics = trainer.evaluate()
             metrics.update({"eval_" + k: v for k, v in eval_metrics.items()})
 
@@ -600,23 +600,23 @@ def main():
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
 
-        logging.info("✅ Entrenamiento completado con éxito!")
-        logging.info("📊 Métricas de evaluación:")
+        logging.info("✅ Training completed successfully!")
+        logging.info("📊 Evaluation metrics:")
         for k, v in eval_metrics.items():
             logging.info(f"   - {k}: {v:.4f}")
 
     except RuntimeError as e:
         if "out of memory" in str(e).lower():
             logging.error(
-                "❌ Error: Memoria insuficiente. Intenta reducir el tamaño de batch o secuencia."
+                "❌ Error: Insufficient memory. Try reducing batch size or sequence length."
             )
         raise
     except Exception as e:
-        logging.error(f"❌ Error durante el entrenamiento: {str(e)}")
+        logging.error(f"❌ Error during training: {str(e)}")
         # Save model despite error if possible
         try:
             trainer.save_model(training_config.output_dir + "_crashed")
-            logging.info(f"Modelo guardado en {training_config.output_dir}_crashed")
+            logging.info(f"Model saved to {training_config.output_dir}_crashed")
         except Exception:
             pass
         raise
@@ -650,7 +650,7 @@ def main():
     # Post-train quick eval
     run_eval(trainer.model, tokenizer, device, eval_prompts)
 
-    logging.info("✅ Adaptador LoRA guardado en: %s", training_config.output_dir)
+    logging.info("✅ LoRA adapter saved to: %s", training_config.output_dir)
     logging.info("📄 Debug log: %s", log_path)
     logging.info("🎉 Training completed at %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
