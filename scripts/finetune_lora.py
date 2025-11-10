@@ -354,7 +354,16 @@ def main():
     )
 
     # Expand dataset if needed
+    # For very small datasets, expand more aggressively to ensure sufficient training data
+    original_dataset_size = len(train_dataset)
     dataset_min_examples = int(os.getenv("FT_DATASET_MIN_EXAMPLES", "100"))
+    
+    # For very small datasets (< 30 original examples), expand to at least 150 examples
+    if original_dataset_size < 30:
+        dataset_min_examples = max(dataset_min_examples, 150)
+        logging.info(">> Very small original dataset (%d examples) - expanding to at least %d examples for better learning", 
+                    original_dataset_size, dataset_min_examples)
+    
     train_dataset = expand_dataset_if_needed(
         train_dataset, dataset_min_examples, seed=data_config.shuffle_seed
     )
@@ -382,14 +391,56 @@ def main():
     # Small datasets (< 200 examples) need more aggressive learning to memorize patterns
     dataset_size = len(train_dataset)
     is_small_dataset = dataset_size < 200
+    is_very_small_dataset = dataset_size < 150  # Very small datasets need even more aggressive settings
     
-    if is_small_dataset:
+    if is_very_small_dataset:
+        logging.info("🔧 Very small dataset detected (%d examples) - applying aggressive hyperparameters for deep memorization", dataset_size)
+        
+        # Very aggressive learning rate for memorization (4.5e-5 to 5e-5)
+        original_lr = training_config.learning_rate
+        if original_lr < 4.5e-5:
+            training_config.learning_rate = 4.5e-5
+            logging.info(f"  - Learning rate increased aggressively: {original_lr:.2e} -> {training_config.learning_rate:.2e}")
+        
+        # More epochs for very small datasets (10-12)
+        if training_config.num_train_epochs < 10:
+            original_epochs = training_config.num_train_epochs
+            training_config.num_train_epochs = 10
+            logging.info(f"  - Epochs increased: {original_epochs} -> {training_config.num_train_epochs}")
+        
+        # Minimal warmup for very small datasets (3% to start learning immediately)
+        if training_config.warmup_ratio > 0.03:
+            original_warmup = training_config.warmup_ratio
+            training_config.warmup_ratio = 0.03
+            logging.info(f"  - Warmup ratio reduced to minimum: {original_warmup} -> {training_config.warmup_ratio} (immediate learning)")
+        
+        # Disable NEFTune completely for very small datasets (it interferes with memorization)
+        if training_config.neftune_noise_alpha is not None and training_config.neftune_noise_alpha > 0:
+            original_neftune = training_config.neftune_noise_alpha
+            training_config.neftune_noise_alpha = None
+            logging.info(f"  - NEFTune DISABLED: {original_neftune} -> None (maximize memorization)")
+        
+        # Reduce weight decay for less regularization (allow more memorization)
+        if training_config.weight_decay > 0.005:
+            original_wd = training_config.weight_decay
+            training_config.weight_decay = 0.005
+            logging.info(f"  - Weight decay reduced: {original_wd} -> {training_config.weight_decay} (less regularization)")
+        
+        # Increase early stopping patience significantly
+        if training_config.early_stopping_patience < 10:
+            original_patience = training_config.early_stopping_patience
+            training_config.early_stopping_patience = 10
+            logging.info(f"  - Early stopping patience increased: {original_patience} -> {training_config.early_stopping_patience}")
+        
+        logging.info("✅ Aggressive hyperparameters applied for very small dataset deep memorization")
+        
+    elif is_small_dataset:
         logging.info("🔧 Small dataset detected (%d examples) - adjusting hyperparameters for deeper learning", dataset_size)
         
-        # Increase learning rate for better pattern learning (3e-5 to 4e-5 for small datasets)
+        # Increase learning rate for better pattern learning (3.5e-5 to 4e-5 for small datasets)
         original_lr = training_config.learning_rate
-        if original_lr < 3e-5:
-            training_config.learning_rate = 3.5e-5
+        if original_lr < 3.5e-5:
+            training_config.learning_rate = 4e-5
             logging.info(f"  - Learning rate increased: {original_lr:.2e} -> {training_config.learning_rate:.2e}")
         
         # Increase epochs for better convergence (8-10 for small datasets)
@@ -404,7 +455,7 @@ def main():
             training_config.warmup_ratio = 0.05
             logging.info(f"  - Warmup ratio reduced: {original_warmup} -> {training_config.warmup_ratio} (faster learning)")
         
-        # Reduce or disable NEFTune for small datasets (it can interfere with deep memorization)
+        # Reduce NEFTune for small datasets (it can interfere with deep memorization)
         if training_config.neftune_noise_alpha is not None and training_config.neftune_noise_alpha > 0:
             original_neftune = training_config.neftune_noise_alpha
             # Reduce NEFTune noise for small datasets (0.05 instead of 0.1)
