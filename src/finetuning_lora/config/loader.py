@@ -40,7 +40,9 @@ def _parse_env_value(value: str) -> Any:
         value: String value from environment variable
         
     Returns:
-        Parsed value with appropriate type
+        Parsed value with appropriate type. Returns None only for truly empty values.
+        For numeric values, empty strings are preserved as empty strings (not None)
+        to allow default values to be used.
     """
     if not value:
         return None
@@ -55,7 +57,7 @@ def _parse_env_value(value: str) -> Any:
     if "," in value:
         return [item.strip() for item in value.split(",") if item.strip()]
     
-    # Handle integer values
+    # Handle integer values (including negative numbers and 0)
     try:
         if "." not in value:  # Avoid parsing floats as ints
             return int(value)
@@ -236,6 +238,36 @@ def load_training_config(env_file: Optional[str] = ".env") -> TrainingConfig:
     # Gradient checkpointing
     if "gradient_checkpointing" in env_config:
         training_config_dict["gradient_checkpointing"] = env_config["gradient_checkpointing"]
+    
+    # DataLoader settings
+    if "dataloader_num_workers" in env_config:
+        workers_value = env_config["dataloader_num_workers"]
+        # Ensure it's an integer (parse if needed)
+        if isinstance(workers_value, int):
+            training_config_dict["dataloader_num_workers"] = workers_value
+        elif isinstance(workers_value, str) and workers_value.strip():
+            try:
+                training_config_dict["dataloader_num_workers"] = int(workers_value)
+            except ValueError:
+                logger.warning(
+                    f"Invalid dataloader_num_workers value: {workers_value}. Using default 0."
+                )
+    if "dataloader_pin_memory" in env_config:
+        training_config_dict["dataloader_pin_memory"] = env_config["dataloader_pin_memory"]
+    if "preprocessing_num_workers" in env_config:
+        workers_value = env_config["preprocessing_num_workers"]
+        # Ensure it's an integer or None
+        if isinstance(workers_value, int):
+            training_config_dict["preprocessing_num_workers"] = workers_value
+        elif workers_value is None:
+            training_config_dict["preprocessing_num_workers"] = None
+        elif isinstance(workers_value, str) and workers_value.strip():
+            try:
+                training_config_dict["preprocessing_num_workers"] = int(workers_value)
+            except ValueError:
+                logger.warning(
+                    f"Invalid preprocessing_num_workers value: {workers_value}. Using default None."
+                )
     
     # Output directory
     if "out_dir" in env_config:

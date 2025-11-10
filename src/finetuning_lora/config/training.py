@@ -97,7 +97,18 @@ class TrainingConfig(BaseConfig):
             "remove_unused_columns": self.remove_unused_columns,
             "logging_first_step": True,
             "save_safetensors": True,
-            "dataloader_num_workers": self.dataloader_num_workers or self.preprocessing_num_workers,
+            # Ensure dataloader_num_workers is always an integer (not None)
+            # Since dataloader_num_workers is int = 0 (not Optional), it should always be an int
+            # But handle edge case where it might be None (e.g., from env loading)
+            "dataloader_num_workers": (
+                self.dataloader_num_workers
+                if isinstance(self.dataloader_num_workers, int)
+                else (
+                    self.preprocessing_num_workers
+                    if isinstance(self.preprocessing_num_workers, int)
+                    else 0
+                )
+            ),
             "dataloader_pin_memory": self.dataloader_pin_memory,
             "tf32": True,  # Enable TF32 for faster training on Ampere GPUs
         }
