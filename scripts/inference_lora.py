@@ -258,22 +258,47 @@ def chat(user, system=DEFAULT_SYSTEM_PROMPT, model=None, tok=None, device=None):
         ).to(device)
         
         # Generate response with Qwen2.5 compatible settings
-        with torch.no_grad():
-            gen = model.generate(
-                **inputs,
-                do_sample=DO_SAMPLE,
-                temperature=TEMPERATURE if DO_SAMPLE else 1.0,  # Only apply temperature when sampling
-                top_p=TOP_P if DO_SAMPLE else 1.0,  # Only apply top_p when sampling
-                max_new_tokens=MAX_NEW_TOKENS,
-                repetition_penalty=REPETITION_PENALTY,
-                eos_token_id=tok.eos_token_id,
-                pad_token_id=tok.pad_token_id,
-                use_cache=True,
-                return_dict_in_generate=True,
-                output_scores=False,
-                output_attentions=False,
-                output_hidden_states=False
-            )
+        # Build generation kwargs - only include sampling parameters when do_sample=True
+        generation_kwargs = {
+            "max_new_tokens": MAX_NEW_TOKENS,
+            "repetition_penalty": REPETITION_PENALTY,
+            "eos_token_id": tok.eos_token_id,
+            "pad_token_id": tok.pad_token_id,
+            "use_cache": True,
+            "return_dict_in_generate": True,
+            "output_scores": False,
+            "output_attentions": False,
+            "output_hidden_states": False,
+        }
+        
+        # Only add sampling parameters when do_sample=True to avoid warnings
+        if DO_SAMPLE:
+            generation_kwargs.update({
+                "do_sample": True,
+                "temperature": TEMPERATURE,
+                "top_p": TOP_P,
+            })
+        else:
+            # Greedy decoding - explicitly set do_sample=False
+            # Also disable top_k if model has it in generation_config to avoid warnings
+            generation_kwargs["do_sample"] = False
+            # Disable top_k in model's generation config if it exists
+            if hasattr(model, "generation_config") and model.generation_config is not None:
+                # Temporarily disable top_k to avoid warnings with greedy decoding
+                original_top_k = getattr(model.generation_config, "top_k", None)
+                if original_top_k is not None:
+                    model.generation_config._original_top_k = original_top_k
+                    model.generation_config.top_k = None
+        
+        try:
+            with torch.no_grad():
+                gen = model.generate(**inputs, **generation_kwargs)
+        finally:
+            # Restore original top_k if we modified it
+            if not DO_SAMPLE and hasattr(model, "generation_config") and model.generation_config is not None:
+                if hasattr(model.generation_config, "_original_top_k"):
+                    model.generation_config.top_k = model.generation_config._original_top_k
+                    delattr(model.generation_config, "_original_top_k")
         
         # Decode the response
         if hasattr(gen, 'sequences'):

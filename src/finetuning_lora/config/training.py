@@ -7,31 +7,32 @@ from .base import BaseConfig
 class TrainingConfig(BaseConfig):
     """Configuration for model training."""
     # Training settings
-    num_train_epochs: int = 3
+    # Optimized defaults for LoRA fine-tuning based on best practices
+    num_train_epochs: int = 5  # Increased from 3 for better convergence
     per_device_train_batch_size: int = 4
     per_device_eval_batch_size: int = 4
-    gradient_accumulation_steps: int = 1
-    learning_rate: float = 2e-4
+    gradient_accumulation_steps: int = 2  # Increased from 1 for better effective batch size
+    learning_rate: float = 2e-5  # Reduced from 2e-4 (LoRA best practice: 1e-5 to 5e-5)
     weight_decay: float = 0.01
-    warmup_ratio: float = 0.03
+    warmup_ratio: float = 0.1  # Increased from 0.03 (10% warmup is better for stability)
     lr_scheduler_type: str = "cosine"
     max_grad_norm: float = 1.0
     
     # Evaluation settings
     evaluation_strategy: str = "steps"
-    eval_steps: int = 100
+    eval_steps: int = 50  # More frequent evaluation for better monitoring
     
     # Logging and saving
     logging_steps: int = 10
-    save_steps: int = 100
-    save_total_limit: int = 2
+    save_steps: int = 50  # More frequent saves to match eval_steps
+    save_total_limit: int = 3  # Keep more checkpoints for comparison
     load_best_model_at_end: bool = True
     metric_for_best_model: str = "eval_loss"
     greater_is_better: bool = False
     
     # Early stopping
-    early_stopping_patience: int = 3
-    early_stopping_threshold: float = 0.0
+    early_stopping_patience: int = 5  # Increased patience for small datasets
+    early_stopping_threshold: float = 0.001  # Small threshold to avoid stopping too early
     
     # Mixed precision training
     fp16: bool = False
@@ -48,7 +49,7 @@ class TrainingConfig(BaseConfig):
     packing: bool = False
     
     # SFTTrainer specific parameters
-    neftune_noise_alpha: Optional[float] = None
+    neftune_noise_alpha: Optional[float] = 0.1  # Enable NEFTune for better generalization (recommended: 0.1-0.3)
     dataset_num_proc: Optional[int] = None
     dataset_text_field: str = "text"
     
