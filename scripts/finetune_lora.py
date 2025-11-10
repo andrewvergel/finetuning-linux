@@ -94,7 +94,12 @@ os.environ.setdefault("HF_DATASETS_DISABLE_MULTIPROCESSING", "1")
 # Evaluation fallback prompts
 EVAL_FALLBACK_PROMPTS = [
     {
-        "system": "Eres un asistente experto en procesos internos.",
+        "system": "Habla en tono profesional y conciso. Responde siempre con pasos numerados.",
+        "user": "Dame los resultados de hoy 09 de noviembre 2025 de la Premier League.",
+        "expected": "1) Crystal Palace 0-0 Brighton...",
+    },
+    {
+        "system": "Eres un asistente experto en procesos internos empresariales.",
         "user": "Dame los pasos para conciliar pagos de los lunes.",
         "expected": "1) Exporta el CSV del banco...",
     }
@@ -358,10 +363,10 @@ def main():
     original_dataset_size = len(train_dataset)
     dataset_min_examples = int(os.getenv("FT_DATASET_MIN_EXAMPLES", "100"))
     
-    # For very small datasets (< 30 original examples), expand to at least 200 examples
+    # For very small datasets (< 30 original examples), expand to at least 300 examples
     # More repetitions = more opportunities to memorize patterns
     if original_dataset_size < 30:
-        dataset_min_examples = max(dataset_min_examples, 200)
+        dataset_min_examples = max(dataset_min_examples, 300)
         logging.info(">> Very small original dataset (%d examples) - expanding to at least %d examples for better memorization", 
                     original_dataset_size, dataset_min_examples)
     
@@ -395,20 +400,26 @@ def main():
     is_very_small_dataset = dataset_size < 150  # Very small datasets need even more aggressive settings
     
     if is_very_small_dataset:
-        logging.info("🔧 Very small dataset detected (%d examples) - applying ULTRA-AGGRESSIVE hyperparameters for deep memorization", dataset_size)
+        logging.info("🔧 Very small dataset detected (%d examples) - applying EXTREME hyperparameters for deep memorization", dataset_size)
         
-        # ULTRA-AGGRESSIVE learning rate for memorization (5e-5 to 6e-5)
+        # EXTREME learning rate for memorization (6e-5 to 7e-5)
         # Higher LR is critical for memorizing specific patterns
         original_lr = training_config.learning_rate
-        if original_lr < 5e-5:
-            training_config.learning_rate = 5e-5
-            logging.info(f"  - Learning rate increased ULTRA-AGGRESSIVELY: {original_lr:.2e} -> {training_config.learning_rate:.2e}")
+        if original_lr < 6e-5:
+            training_config.learning_rate = 6e-5
+            logging.info(f"  - Learning rate increased EXTREMELY: {original_lr:.2e} -> {training_config.learning_rate:.2e}")
         
-        # More epochs for very small datasets (12-15 for maximum memorization)
-        if training_config.num_train_epochs < 12:
+        # More epochs for very small datasets (15-20 for maximum memorization)
+        if training_config.num_train_epochs < 15:
             original_epochs = training_config.num_train_epochs
-            training_config.num_train_epochs = 12
-            logging.info(f"  - Epochs increased significantly: {original_epochs} -> {training_config.num_train_epochs}")
+            training_config.num_train_epochs = 15
+            logging.info(f"  - Epochs increased to maximum: {original_epochs} -> {training_config.num_train_epochs}")
+        
+        # Reduce batch size to see more examples per epoch (better for memorization)
+        if training_config.per_device_train_batch_size > 2:
+            original_batch = training_config.per_device_train_batch_size
+            training_config.per_device_train_batch_size = 2
+            logging.info(f"  - Batch size reduced: {original_batch} -> {training_config.per_device_train_batch_size} (more examples per epoch)")
         
         # Minimal warmup for very small datasets (2% to start learning immediately)
         if training_config.warmup_ratio > 0.02:
@@ -435,12 +446,18 @@ def main():
             logging.info(f"  - LoRA dropout reduced: {original_lora_dropout} -> {model_config.lora_dropout} (better memorization)")
         
         # Increase early stopping patience significantly (allow more training)
-        if training_config.early_stopping_patience < 12:
+        if training_config.early_stopping_patience < 15:
             original_patience = training_config.early_stopping_patience
-            training_config.early_stopping_patience = 12
-            logging.info(f"  - Early stopping patience increased significantly: {original_patience} -> {training_config.early_stopping_patience}")
+            training_config.early_stopping_patience = 15
+            logging.info(f"  - Early stopping patience increased to maximum: {original_patience} -> {training_config.early_stopping_patience}")
         
-        logging.info("✅ ULTRA-AGGRESSIVE hyperparameters applied for very small dataset deep memorization")
+        # Reduce eval/save frequency to allow more training between evaluations
+        if training_config.eval_steps > 25:
+            original_eval_steps = training_config.eval_steps
+            training_config.eval_steps = 25
+            logging.info(f"  - Eval steps reduced: {original_eval_steps} -> {training_config.eval_steps} (more frequent monitoring)")
+        
+        logging.info("✅ EXTREME hyperparameters applied for very small dataset deep memorization")
         
     elif is_small_dataset:
         logging.info("🔧 Small dataset detected (%d examples) - adjusting hyperparameters for deeper learning", dataset_size)
