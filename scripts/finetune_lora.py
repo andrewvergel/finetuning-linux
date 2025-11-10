@@ -412,6 +412,18 @@ def main():
         training_args_dict["fp16"] = False
         logging.info(">> QLoRA enabled: bf16/fp16 disabled (using 4-bit quantization)")
     
+    # CRITICAL FIX: For SFTTrainer with non-packed datasets, we MUST set remove_unused_columns=True
+    # When remove_unused_columns=False, the 'text' field remains in the dataset after tokenization,
+    # causing the data collator to try to pad both tokenized fields (input_ids) and the text field (string),
+    # resulting in "excessive nesting" error. SFTTrainer will automatically remove the 'text' field
+    # after tokenization when remove_unused_columns=True.
+    if not use_packing:
+        training_args_dict["remove_unused_columns"] = True
+        logging.info(">> Set remove_unused_columns=True for SFTTrainer (required for non-packed datasets)")
+    else:
+        # For packed datasets, we can keep remove_unused_columns=False if needed
+        logging.info(">> Using remove_unused_columns=%s (packing enabled)", training_config.remove_unused_columns)
+    
     # Update with eval dataset configuration
     if eval_dataset and len(eval_dataset) > 0:
         training_args_dict["evaluation_strategy"] = "steps"
