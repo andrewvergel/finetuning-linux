@@ -430,11 +430,23 @@ def main():
         raise ValueError(
             f"Dataset missing 'text' field. Found keys: {list(sample_example.keys())}"
         )
-    if not isinstance(sample_example["text"], str):
+    
+    # Ensure text is a plain string (not nested)
+    text_value = sample_example["text"]
+    if isinstance(text_value, list):
         raise ValueError(
-            f"Dataset 'text' field must be a string, got {type(sample_example['text'])}"
+            f"Dataset 'text' field contains a list (nested structure). "
+            f"This will cause tokenization errors. First item type: {type(text_value[0]) if text_value else 'empty list'}"
         )
-    logging.info(f">> Dataset structure verified: text field length = {len(sample_example['text'])} chars")
+    if not isinstance(text_value, str):
+        raise ValueError(
+            f"Dataset 'text' field must be a string, got {type(text_value)}. Value: {text_value}"
+        )
+    if not text_value.strip():
+        raise ValueError("Dataset 'text' field contains empty string")
+    
+    logging.info(f">> Dataset structure verified: text field length = {len(text_value)} chars")
+    logging.info(f">> Sample text preview: {text_value[:100]}...")
 
     # Initialize SFTTrainer
     logging.info("🚀 Inicializando SFTTrainer...")

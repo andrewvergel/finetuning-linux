@@ -344,17 +344,28 @@ class DataProcessor:
                 f"Messages: {messages}"
             ) from e
         
+        # Ensure text is a plain string (not a list or other type)
+        # This is critical - SFTTrainer expects a simple string, not nested structures
+        if isinstance(text, list):
+            # If apply_chat_template returns a list (shouldn't happen with tokenize=False, but handle it)
+            logger.warning(f"apply_chat_template returned a list, joining elements")
+            text = "".join(str(item) for item in text)
+        elif not isinstance(text, str):
+            # Convert any other type to string
+            text = str(text)
+        
+        # Ensure text is a non-empty string
+        text = text.strip()
+        if not text:
+            raise ValueError("Formatted text is empty after processing")
+        
         # Ensure text ends with EOS token
         eos_token = self.tokenizer.eos_token or "</s>"
         if not text.endswith(eos_token):
             text += eos_token
         
-        # Ensure text is a plain string (not a list or other type)
-        if not isinstance(text, str):
-            text = str(text)
-        
         # Return as a simple dictionary with text field
-        # SFTTrainer expects this format: {"text": "string"}
+        # SFTTrainer expects this format: {"text": "string"} where text is a plain string
         return {"text": text}
     
     def tokenize_function(self, examples: Dict[str, List[Any]]) -> Dict[str, List[Any]]:
@@ -484,5 +495,42 @@ class DataProcessor:
             train_dataset = train_dataset.shuffle(seed=shuffle_seed)
             if val_dataset is not None:
                 val_dataset = val_dataset.shuffle(seed=shuffle_seed)
+        
+        # Validate dataset structure before returning
+        # Ensure all examples have a "text" field that is a plain string
+        def validate_text_field(example):
+            """Validate and fix text field if needed."""
+            if "text" not in example:
+                raise ValueError(f"Example missing 'text' field. Keys: {list(example.keys())}")
+            
+            text = example["text"]
+            
+            # Handle nested structures (shouldn't happen, but be defensive)
+            if isinstance(text, list):
+                logger.warning(f"Found list in text field, joining elements")
+                text = "".join(str(item) for item in text)
+            elif not isinstance(text, str):
+                text = str(text)
+            
+            # Ensure it's a non-empty string
+            text = text.strip()
+            if not text:
+                raise ValueError("Text field is empty after processing")
+            
+            return {"text": text}
+        
+        # Apply validation to both datasets
+        train_dataset = train_dataset.map(
+            validate_text_field,
+            batched=False,
+            desc="Validating text field format"
+        )
+        
+        if val_dataset is not None:
+            val_dataset = val_dataset.map(
+                validate_text_field,
+                batched=False,
+                desc="Validating text field format"
+            )
         
         return train_dataset, val_dataset
