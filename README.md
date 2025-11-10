@@ -17,11 +17,14 @@
 ## 🧱 Arquitectura y Flujo
 1. **Bootstrap de entorno** – instalación de drivers, CUDA y dependencias en un equipo limpio.
 2. **Dataset JSONL** – prompts internos versionados en `data/instructions.jsonl`.
-3. **Script de entrenamiento** – `scripts/finetune_lora.py` (v1.1.1) realiza duplicación inteligente del dataset y ajusta hiperparámetros para escenarios de pocos datos.
+3. **Script de entrenamiento** – `scripts/finetune_lora.py` (v2.0.0) utiliza clases de configuración estructuradas y realiza duplicación inteligente del dataset y ajusta hiperparámetros para escenarios de pocos datos.
 4. **Inferencia controlada** – `scripts/inference_lora.py` (v1.0.2) con decodificación determinista para evaluar resultados.
 5. **Reportes** – se genera `training_info.json` con metadatos del entrenamiento.
 
 ## 🚀 Puesta en Marcha desde Cero
+
+### Quick Start (Local Development)
+
 ```bash
 # 1. Clonar el repositorio
 git clone https://github.com/andrewvergel/finetuning-linux.git
@@ -40,7 +43,21 @@ pip install "numpy<2.0" pyarrow==14.0.1
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,expandable_segments:True
 pip install -r requirements.txt
 ```
-> 💡 Si partes de un servidor recién formateado, instala previamente los drivers NVIDIA, CUDA 12.1 y utilidades del sistema (detallado en secciones posteriores del repositorio original).
+
+### Server Deployment
+
+For detailed step-by-step server deployment instructions, see [SERVER_DEPLOYMENT.md](docs/SERVER_DEPLOYMENT.md).
+
+The deployment guide covers:
+- NVIDIA driver installation
+- CUDA toolkit setup
+- Python environment configuration
+- Dataset preparation
+- Training execution
+- Monitoring and troubleshooting
+- Automation and scheduling
+
+> 💡 **New in v2.0.0:** The script has been refactored to use structured configuration classes (`ModelConfig`, `TrainingConfig`, `DataConfig`) for better code organization and maintainability.
 > 📦 `requirements.txt` incluye todas las librerías auxiliares; aun así, instalamos `numpy<2.0` y `pyarrow==14.0.1` antes para evitar conflictos conocidos con `datasets` (error `PyExtensionType`).
 > 🔍 Antes de entrenar, puedes ejecutar `python scripts/validate_environment.py` para verificar versiones de Python, CUDA, VRAM disponible, dataset y dependencias.
 > 🧩 Para modelos Qwen2.5 asegúrate de usar `transformers>=4.40` y `peft>=0.10` (ya fijados en `requirements.txt`).
@@ -57,7 +74,14 @@ JSONL
 ```
 > ℹ️ `data/instructions.jsonl` **ya viene versionado en este repositorio** y es el único archivo permitido dentro de `data/`. El script de entrenamiento duplica automáticamente el dataset si detecta menos de 200 muestras, pero se recomienda ampliarlo manualmente con más casuísticas para mejorar la diversidad de respuestas.
 
-## 🛠️ Script de Entrenamiento (`scripts/finetune_lora.py` v1.2.0)
+## 🛠️ Script de Entrenamiento (`scripts/finetune_lora.py` v2.0.0)
+
+### Cambios en v2.0.0
+- **Refactorizado para usar clases de configuración estructuradas**: `ModelConfig`, `TrainingConfig`, `DataConfig`
+- **Uso de `ModelBuilder`**: Carga de modelos centralizada y reutilizable
+- **Uso de `DataProcessor`**: Procesamiento de datos centralizado
+- **Mejor separación de concerns**: Código más mantenible y testeable
+- **Mantiene toda la funcionalidad anterior**: Compatible con configuraciones existentes
 
 ### Características Principales
 - **Modelo Base:** `Qwen/Qwen2.5-7B-Instruct` por defecto (soporta cualquier modelo compatible con Transformers)

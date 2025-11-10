@@ -221,22 +221,34 @@ def load_model_and_tokenizer():
     return model, tok, ADAPTER_PATH
 
 def chat(user, system=DEFAULT_SYSTEM_PROMPT, model=None, tok=None, device=None):
-    """Chat function with the fine-tuned model with safety checks"""
+    """Chat function with the fine-tuned model using chat template formatting"""
     if model is None or tok is None:
         print("❌ Model or tokenizer not loaded")
         return None
     
     # Check if device is available
-    if device.type == "cuda" and not torch.cuda.is_available():
+    if device is None:
+        device = get_device()
+    elif device.type == "cuda" and not torch.cuda.is_available():
         print("❌ CUDA not available, falling back to CPU")
         device = torch.device("cpu")
     
     try:
-        # Format prompt to match training format
-        prompt = f"System: {system}\nUser: {user}\nAssistant:"
+        # Format messages using the chat template
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
+        ]
+        
+        # Apply the chat template
+        prompt = tok.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True  # Add assistant turn for generation
+        )
         
         # Tokenize with same settings as training
-        ids = tok(
+        inputs = tok(
             prompt,
             return_tensors="pt",
             padding=True,
@@ -246,32 +258,38 @@ def chat(user, system=DEFAULT_SYSTEM_PROMPT, model=None, tok=None, device=None):
         ).to(device)
         
         # Generate response with Qwen2.5 compatible settings
-        gen = model.generate(
-            input_ids=ids.input_ids,
-            attention_mask=ids.attention_mask,
-            do_sample=DO_SAMPLE,
-            temperature=TEMPERATURE if DO_SAMPLE else 1.0,  # Only apply temperature when sampling
-            top_p=TOP_P if DO_SAMPLE else 1.0,  # Only apply top_p when sampling
-            max_new_tokens=MAX_NEW_TOKENS,
-            repetition_penalty=REPETITION_PENALTY,
-            eos_token_id=tok.eos_token_id,
-            pad_token_id=tok.pad_token_id,
-            use_cache=True,
-            return_dict_in_generate=True,
-            output_scores=False,
-            output_attentions=False,
-            output_hidden_states=False
-        )
+        with torch.no_grad():
+            gen = model.generate(
+                **inputs,
+                do_sample=DO_SAMPLE,
+                temperature=TEMPERATURE if DO_SAMPLE else 1.0,  # Only apply temperature when sampling
+                top_p=TOP_P if DO_SAMPLE else 1.0,  # Only apply top_p when sampling
+                max_new_tokens=MAX_NEW_TOKENS,
+                repetition_penalty=REPETITION_PENALTY,
+                eos_token_id=tok.eos_token_id,
+                pad_token_id=tok.pad_token_id,
+                use_cache=True,
+                return_dict_in_generate=True,
+                output_scores=False,
+                output_attentions=False,
+                output_hidden_states=False
+            )
         
-        # Decode and clean up the response
+        # Decode the response
         if hasattr(gen, 'sequences'):
-            response = tok.decode(gen.sequences[0], skip_special_tokens=True)
+            full_response = tok.decode(gen.sequences[0], skip_special_tokens=True)
         else:
-            response = tok.decode(gen[0], skip_special_tokens=True)
-        # Remove the input prompt from the response
-        response = response.replace(prompt, '').strip()  # Take only the first line of response
+            full_response = tok.decode(gen[0], skip_special_tokens=True)
         
-        print("\n Respuesta:", response)
+        # Extract only the assistant's response (everything after the last user message)
+        # This handles cases where the model might repeat the prompt
+        user_content = messages[-1]["content"]
+        response = full_response.split(user_content)[-1].strip()
+        
+        # Clean up any remaining special tokens or artifacts
+        response = response.replace("<|im_end|>", "").replace("<|endoftext|>", "").strip()
+        
+        print("\nRespuesta:", response)
         return response
         
     except Exception as e:

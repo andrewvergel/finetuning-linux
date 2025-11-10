@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
 """
 LoRA Fine-tuning Script for RTX 4060 Ti
-Version: 1.1.1
-Author: Auto-generated from INSTRUCTIONS.md
+Version: 2.0.0
+Author: Refactored to use structured configuration classes
 Optimized for: RTX 4060 Ti (16GB VRAM)
 
 Changelog:
+Version: 2.0.0
+- Refactored to use structured configuration classes (ModelConfig, TrainingConfig, DataConfig)
+- Uses ModelBuilder for model loading
+- Uses DataProcessor for data processing
+- Maintains all previous functionality while improving code organization
+- Better separation of concerns and testability
+
 Version: 1.2.0
 - bf16 por defecto (más estable en Ada/Lovelace)
 - Packing forzado (opcional por .env)
 - Gradient Checkpointing + use_cache=False
 - EarlyStopping + eval/save por pasos
 - Opción QLoRA 4-bit activable por .env sin tocar el código
-- v1.1.1: Expose training hyperparameters as module-level constants, add debug logging & post-train eval
-- v1.1.0: Faster training loop (less repetition, bigger batches, fewer epochs, LoRA r=16)
-- v1.0.9: Repeat tiny datasets and widen LoRA target modules for better learning
-- v1.0.8: Tune hyperparameters for tiny datasets (more epochs, smaller batches)
-- v1.0.7: Use dataset_text_field pipeline to avoid tokenizer batch errors
 """
 
 import os
@@ -24,74 +26,31 @@ import sys
 import math
 import json
 import logging
-from typing import List
+from typing import List, Optional
 from datetime import datetime
+from pathlib import Path
 
 import torch
-from datasets import load_dataset, concatenate_datasets, Dataset
+from datasets import Dataset, concatenate_datasets
 from packaging import version
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    TrainingArguments,
-    EarlyStoppingCallback,
+from transformers import TrainingArguments, EarlyStoppingCallback
+from trl import SFTTrainer
+
+# Import structured components
+from finetuning_lora.config import (
+    load_env_file,
+    load_model_config,
+    load_training_config,
+    load_data_config,
 )
-from peft import LoraConfig, get_peft_model
-from trl import SFTTrainer, SFTConfig
+from finetuning_lora.models.builder import ModelBuilder
+from finetuning_lora.data.processor import DataProcessor
+from finetuning_lora.utils.logging import setup_logging, log_version_info
 
-# Opcional: BitsAndBytes solo si QLoRA activado y lib disponible
-try:
-    from transformers import BitsAndBytesConfig  # type: ignore
-    _HAS_BNB = True
-except Exception:
-    _HAS_BNB = False
-
-SCRIPT_VERSION = "1.2.0"
+SCRIPT_VERSION = "2.0.0"
 SCRIPT_NAME = "finetune_lora.py"
 
-# -------- Helpers ENV --------
-def load_env_file(path: str = ".env") -> None:
-    if not os.path.exists(path):
-        return
-    try:
-        with open(path, "r", encoding="utf-8") as env_file:
-            for line in env_file:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip().strip("\"'"))
-    except Exception as exc:
-        print(f"⚠️ Could not load {path}: {exc}", file=sys.stderr)
-
-def env_int(key: str, default: int) -> int:
-    v = os.getenv(key)
-    if v is None: return default
-    try: return int(v)
-    except ValueError: return default
-
-def env_float(key: str, default: float) -> float:
-    v = os.getenv(key)
-    if v is None: return default
-    try: return float(v)
-    except ValueError: return default
-
-def env_str(key: str, default: str) -> str:
-    return os.getenv(key, default)
-
-def env_bool(key: str, default: bool) -> bool:
-    v = os.getenv(key)
-    if v is None: return default
-    return v.lower() in ("1", "true", "yes", "y", "on")
-
-def env_list(key: str, default: List[str]) -> List[str]:
-    v = os.getenv(key)
-    if not v: return default
-    items = [s.strip() for s in v.split(",") if s.strip()]
-    return items or default
-
-load_env_file()
-
+# Check required versions
 import transformers
 import peft
 
@@ -100,153 +59,196 @@ REQUIRED_PEFT = "0.10.0"
 
 if version.parse(transformers.__version__) < version.parse(REQUIRED_TRANSFORMERS):
     raise RuntimeError(
-        f"transformers>={REQUIRED_TRANSFORMERS} is required for {MODEL_ID}. "
+        f"transformers>={REQUIRED_TRANSFORMERS} is required. "
         f"Found {transformers.__version__}. Please upgrade: pip install --upgrade transformers"
     )
 
 if version.parse(peft.__version__) < version.parse(REQUIRED_PEFT):
     raise RuntimeError(
-        f"peft>={REQUIRED_PEFT} is required for this script. Found {peft.__version__}. "
+        f"peft>={REQUIRED_PEFT} is required. Found {peft.__version__}. "
         f"Please upgrade: pip install --upgrade peft"
     )
 
-# ======== Tunables por .env ========
-MODEL_ID = env_str("FT_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
-DATA_PATH = env_str("FT_DATA_PATH", "data/instructions.jsonl")
-OUT_DIR = env_str("FT_OUT_DIR", "models/out-lora")
-
-# Memory optimization parameters
-DATASET_MIN_EXAMPLES = env_int("FT_DATASET_MIN_EXAMPLES", 100)  # Reduced minimum dataset size
-PER_DEVICE_BATCH_SIZE = env_int("FT_PER_DEVICE_BATCH_SIZE", 1)  # Keep at 1 for VRAM efficiency
-GRADIENT_ACCUMULATION = env_int("FT_GRADIENT_ACCUMULATION", 8)  # Reduced for more frequent updates
-MAX_SEQ_LEN_OVERRIDE = env_int("FT_MAX_SEQ_LEN", 512)  # Keep at 512 for memory efficiency
+# Load environment variables
+load_env_file()
 
 # Enable memory optimizations
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:True"
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:128,expandable_segments:True")
+os.environ.setdefault("CUDA_LAUNCH_BLOCKING", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("HF_DATASETS_DISABLE_MULTIPROCESSING", "1")
 
-# Training parameters
-NUM_EPOCHS = env_int("FT_NUM_EPOCHS",8)  # Reduced epochs for faster iteration
-LEARNING_RATE = env_float("FT_LEARNING_RATE", 1.5e-5)  # Lower learning rate for stability
-WARMUP_RATIO = env_float("FT_WARMUP_RATIO", 0.1)  # Keep 10% warmup steps
-LR_SCHEDULER = env_str("FT_LR_SCHEDULER", "cosine_with_restarts")  # Better convergence
-WEIGHT_DECAY = env_float("FT_WEIGHT_DECAY", 0.02)  # Slightly higher for better regularization
-
-# LoRA parameters - balanced for performance and memory
-LORA_RANK = env_int("FT_LORA_RANK", 16)  # Increased rank for better learning
-LORA_ALPHA = env_int("FT_LORA_ALPHA", 16)  # Alpha = 2*rank for stability
-LORA_DROPOUT = env_float("FT_LORA_DROPOUT", 0.05)  # Slight dropout for regularization
-# Target key layers for efficient fine-tuning
-LORA_TARGET_MODULES = env_list("FT_LORA_TARGET_MODULES", ["q_proj", "v_proj"])  # Added v_proj
-
-# Training configuration
-LOGGING_STEPS = env_int("FT_LOGGING_STEPS", 10)  # Log every 10 steps
-SAVE_STRATEGY = env_str("FT_SAVE_STRATEGY", "steps")
-SAVE_TOTAL_LIMIT = env_int("FT_SAVE_TOTAL_LIMIT", 2)  # Keep last 2 checkpoints
-DATASET_SHUFFLE_SEED = env_int("FT_DATASET_SHUFFLE_SEED", 42)
-VALIDATION_SPLIT = env_float("FT_VALIDATION_SPLIT", 0.15)  # Slightly less validation data
-DEBUG_LOG_FILE = env_str("FT_DEBUG_LOG_FILE", "debug_last_run.log")
-EVAL_MAX_NEW_TOKENS = env_int("FT_EVAL_MAX_NEW_TOKENS", 128)  # Keep reasonable for evaluation
-EVAL_SAMPLE_SIZE = env_int("FT_EVAL_SAMPLE_SIZE", 3)  # Fewer samples to save VRAM
-EVAL_STEPS = env_int("FT_EVAL_STEPS", 25)  # Evaluate more frequently
-SAVE_STEPS = env_int("FT_SAVE_STEPS", 25)  # Save more frequently
-
-# Memory optimization flags
-FORCE_PACKING = env_bool("FT_FORCE_PACKING", False)  # Keep disabled for VRAM efficiency
-USE_QLORA = env_bool("FT_USE_QLORA", True)  # Enable QLoRA for 4-bit quantization
-TRUST_REMOTE_CODE = env_bool("FT_TRUST_REMOTE_CODE", True)  # Required for some models
-
-# Enable memory optimizations
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:True"
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # For better error messages
-
-# Hardening/ruido
-os.environ.setdefault("TOKENIZERS_PARALLELISM", os.getenv("TOKENIZERS_PARALLELISM", "false"))
-os.environ.setdefault("HF_DATASETS_DISABLE_MULTIPROCESSING", os.getenv("HF_DATASETS_DISABLE_MULTIPROCESSING", "1"))
-
+# Evaluation fallback prompts
 EVAL_FALLBACK_PROMPTS = [
-    {"system": "Eres un asistente experto en procesos internos.",
-     "user": "Dame los pasos para conciliar pagos de los lunes.",
-     "expected": "1) Exporta el CSV del banco..."}
+    {
+        "system": "Eres un asistente experto en procesos internos.",
+        "user": "Dame los pasos para conciliar pagos de los lunes.",
+        "expected": "1) Exporta el CSV del banco...",
+    }
 ]
 
-# -------- Logging --------
-def setup_logging():
-    os.makedirs("logs", exist_ok=True)
-    log_path = os.path.join("logs", DEBUG_LOG_FILE)
-    for h in logging.root.handlers[:]:
-        logging.root.removeHandler(h)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.FileHandler(log_path, mode="w"), logging.StreamHandler(sys.stdout)],
-    )
-    logging.info("Debug log initialized at %s", log_path)
-    return log_path
 
-def log_version_info():
-    logging.info("🚀 %s v%s", SCRIPT_NAME, SCRIPT_VERSION)
-    logging.info("📅 Started at: %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    logging.info("💻 PyTorch: %s", torch.__version__)
-    dev = "CUDA" if torch.cuda.is_available() else "CPU"
-    name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
-    logging.info("🖥️ Device: %s", name)
-    if torch.cuda.is_available():
-        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
-        logging.info("📊 VRAM: %.1fGB", vram_gb)
-
-def get_device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# -------- Datos --------
-def validate_example(example: dict) -> bool:
-    """Valida que un ejemplo tenga la estructura correcta."""
-    required_fields = ["input", "output"]
-    return all(field in example and example[field].strip() for field in required_fields)
-
-def format_example(example, eos_token: str):
-    """Formatea un ejemplo para el entrenamiento."""
-    if not validate_example(example):
-        raise ValueError(f"Ejemplo inválido: {example}")
-        
-    system_prompt = example.get("system", "Eres un asistente útil y conciso.")
-    text = (
-        f"System: {system_prompt}\n"
-        f"User: {example['input']}\n"
-        f"Assistant: {example['output']}{eos_token}"
-    )
-    return {"text": text, "length": len(text)}
-
-def run_eval(model, tok, device, eval_prompts):
+def run_eval(model, tokenizer, device, eval_prompts):
+    """Run evaluation on sample prompts.
+    
+    Args:
+        model: The trained model
+        tokenizer: The tokenizer
+        device: Device to run inference on
+        eval_prompts: List of evaluation prompts
+    """
     if not eval_prompts:
         logging.warning(">> No evaluation prompts available. Skipping quick evaluation.")
         return
+
     logging.info(">> Running quick evaluation on %d sample prompts...", len(eval_prompts))
     model.eval()
+
     for sample in eval_prompts:
-        composed = f"System: {sample.get('system','')}\nUser: {sample.get('user','')}\nAssistant:"
-        inputs = tok(composed, return_tensors="pt").to(device)
-        with torch.inference_mode():
+        # Build messages for chat template
+        messages = [
+            {
+                "role": "system",
+                "content": sample.get("system", "Eres un asistente útil y conciso."),
+            },
+            {"role": "user", "content": sample.get("user", "")},
+        ]
+
+        # Generate prompt with chat template
+        prompt = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+
+        # Tokenize and generate
+        inputs = tokenizer(
+            prompt, return_tensors="pt", padding=True, truncation=True, max_length=2048
+        ).to(device)
+
+        with torch.no_grad():
             out = model.generate(
                 **inputs,
-                max_new_tokens=EVAL_MAX_NEW_TOKENS,
+                max_new_tokens=128,  # Default eval max new tokens
                 do_sample=False,
-                pad_token_id=tok.eos_token_id,
-                eos_token_id=tok.eos_token_id,
-                repetition_penalty=1.05,
+                pad_token_id=tokenizer.eos_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                repetition_penalty=1.1,
             )
-        decoded = tok.decode(out[0], skip_special_tokens=True)
-        reply = decoded.split("Assistant:")[-1].strip()
-        logging.info("[Eval] User: %s", sample.get("user",""))
-        logging.info("[Eval] Assistant: %s", reply)
-        exp = sample.get("expected")
-        if exp:
-            logging.info("[Eval] Expected: %s", exp)
+
+        # Decode and extract assistant response
+        decoded = tokenizer.decode(out[0], skip_special_tokens=True)
+        user_content = messages[-1]["content"]
+        assistant_response = decoded.split(user_content)[-1].strip()
+
+        logging.info("[Eval] User: %s", sample.get("user", ""))
+        logging.info("[Eval] Expected: %s", sample.get("expected", "No expected output"))
+        logging.info("[Eval] Model: %s", assistant_response)
+        logging.info("-" * 80)
+
+
+def expand_dataset_if_needed(dataset: Dataset, min_examples: int, seed: int = 42) -> Dataset:
+    """Expand dataset if it's too small by repeating examples.
+    
+    Args:
+        dataset: Dataset to expand
+        min_examples: Minimum number of examples required
+        seed: Random seed for shuffling
+        
+    Returns:
+        Expanded dataset
+    """
+    if len(dataset) >= min_examples:
+        return dataset
+
+    repeat_factor = max(1, math.ceil(min_examples / len(dataset)))
+    expanded = concatenate_datasets([dataset] * repeat_factor).shuffle(seed=seed)
+    logging.info(
+        ">> Training dataset expanded: %dx -> %d ejemplos", repeat_factor, len(expanded)
+    )
+    return expanded
+
+
+def calculate_dataset_stats(dataset: Dataset, tokenizer, max_seq_len: int, sample_size: int = 64):
+    """Calculate statistics about the dataset.
+    
+    Args:
+        dataset: Dataset to analyze
+        tokenizer: Tokenizer for token counting
+        max_seq_len: Maximum sequence length
+        sample_size: Number of samples to analyze
+        
+    Returns:
+        Dictionary with dataset statistics
+    """
+    sample_size = min(sample_size, len(dataset))
+    token_lengths = []
+    total_chars = 0
+
+    for i in range(sample_size):
+        text = dataset[i]["text"]
+        tokens = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_seq_len)
+        token_lengths.append(len(tokens["input_ids"][0]))
+        total_chars += len(text)
+
+    stats = {
+        "avg_tokens": sum(token_lengths) / len(token_lengths) if token_lengths else 0,
+        "max_tokens": max(token_lengths) if token_lengths else 0,
+        "min_tokens": min(token_lengths) if token_lengths else 0,
+        "avg_chars": total_chars / sample_size if sample_size > 0 else 0,
+        "total_examples": len(dataset),
+    }
+
+    # Calculate approximate total tokens
+    stats["approx_total_tokens"] = stats["avg_tokens"] * len(dataset)
+
+    return stats
+
+
+def should_use_packing(
+    dataset: Dataset, stats: dict, max_seq_len: int, force_packing: bool, min_examples: int = 64
+) -> bool:
+    """Determine if packing should be used.
+    
+    Args:
+        dataset: Training dataset
+        stats: Dataset statistics
+        max_seq_len: Maximum sequence length
+        force_packing: Whether packing is forced via config
+        min_examples: Minimum examples required for packing
+        
+    Returns:
+        Whether to use packing
+    """
+    if not force_packing:
+        return False
+
+    min_tokens_for_packing = max_seq_len * 4
+
+    if len(dataset) < min_examples:
+        logging.warning(
+            "Packing forzado deshabilitado: dataset muy pequeño (%d < %d ejemplos)",
+            len(dataset),
+            min_examples,
+        )
+        return False
+
+    if stats["approx_total_tokens"] < min_tokens_for_packing:
+        logging.warning(
+            "Packing forzado deshabilitado: tokens estimados insuficientes (%.0f < %d)",
+            stats["approx_total_tokens"],
+            min_tokens_for_packing,
+        )
+        return False
+
+    return True
+
 
 def main():
+    """Main training function."""
+    # Setup logging
     log_path = setup_logging()
-    log_version_info()
+    log_version_info(SCRIPT_NAME, SCRIPT_VERSION)
 
-    # SDP kernels (Flash/Mem-efficient) si están disponibles
+    # Enable SDP kernels if available
     try:
         torch.backends.cuda.enable_flash_sdp(True)
         torch.backends.cuda.enable_mem_efficient_sdp(True)
@@ -254,423 +256,284 @@ def main():
     except Exception:
         pass
 
-    device = get_device()
+    # Load configurations from environment
+    model_config = load_model_config()
+    training_config = load_training_config()
+    data_config = load_data_config()
+
+    # Get device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logging.info(">> Device detectado: %s", device)
 
-    if not os.path.exists(DATA_PATH):
-        logging.error("❌ Error: dataset %s not found.", DATA_PATH)
+    # Validate dataset exists
+    if not Path(data_config.train_path).exists():
+        logging.error("❌ Error: dataset %s not found.", data_config.train_path)
         return
 
-    logging.info(">> Loading dataset from: %s", DATA_PATH)
-    raw_ds = load_dataset("json", data_files=DATA_PATH)["train"]
-    logging.info(">> Dataset loaded: %d examples", len(raw_ds))
-    if len(raw_ds) < 2:
-        logging.error("❌ Dataset too small (%d). Add more data before training.", len(raw_ds))
-        return
+    logging.info(">> Loading dataset from: %s", data_config.train_path)
 
-    split = raw_ds.train_test_split(test_size=VALIDATION_SPLIT, seed=DATASET_SHUFFLE_SEED)
-    train_raw = split["train"].shuffle(seed=DATASET_SHUFFLE_SEED)
-    eval_raw = split["test"].shuffle(seed=DATASET_SHUFFLE_SEED)
+    # Load model and tokenizer using ModelBuilder
+    logging.info(">> Loading model: %s", model_config.model_name_or_path)
+    model_builder = ModelBuilder(model_config=model_config, training_config=training_config)
+    model, tokenizer = model_builder.load_model()
 
-    # Eval prompts
-    eval_prompts = []
-    sample_n = min(EVAL_SAMPLE_SIZE, len(eval_raw))
-    for i in range(sample_n):
-        row = eval_raw[i]
-        eval_prompts.append(
-            {"system": row.get("system", ""), "user": row.get("input", ""), "expected": row.get("output", "")}
-        )
-    if not eval_prompts:
-        eval_prompts = EVAL_FALLBACK_PROMPTS
-
-    logging.info(">> Loading tokenizer: %s", MODEL_ID)
-    tokenizer_kwargs = {"trust_remote_code": True} if TRUST_REMOTE_CODE else {}
-    try:
-        tok = AutoTokenizer.from_pretrained(MODEL_ID, **tokenizer_kwargs)
-    except ValueError as exc:
-        if "Tokenizer class" in str(exc) and not TRUST_REMOTE_CODE:
-            logging.warning(
-                "Tokenizer for %s requires remote code. Retrying once with trust_remote_code=True (set FT_TRUST_REMOTE_CODE=1 to silence this warning).",
-                MODEL_ID,
-            )
-            tok = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
-        else:
-            raise
-    if tok.pad_token is None:
-        tok.pad_token = tok.eos_token
-    EOS = tok.eos_token
-    logging.info(">> Tokenizer loaded")
-
-    # Carga de modelo (bf16 o QLoRA 4-bit)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    device_map = {"": device.index if hasattr(device, 'index') and device.index is not None else 0}
-    
-    if USE_QLORA and _HAS_BNB:
-        logging.info("🔧 Configurando QLoRA (4-bit)")
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_use_double_quant=True,
-        )
-        
-        model = AutoModelForCausalLM.from_pretrained(
-            MODEL_ID,
-            quantization_config=bnb_config,
-            trust_remote_code=TRUST_REMOTE_CODE,
-            device_map=device_map,
-            torch_dtype=torch.bfloat16
-        )
-    else:
-        model = AutoModelForCausalLM.from_pretrained(
-            MODEL_ID,
-            trust_remote_code=TRUST_REMOTE_CODE,
-            device_map=device_map,
-            torch_dtype=torch.bfloat16
-        )
-        if not USE_QLORA:
-            model.to(device)
-    
     logging.info(">> Model loaded on %s", device)
 
-    # Longitud de contexto & packing
-    # Selecciona el mínimo válido entre modelo/tokenizer/override
-    candidates = []
-    for ctx in (getattr(model.config, "n_positions", None), getattr(tok, "model_max_length", None), MAX_SEQ_LEN_OVERRIDE):
-        if ctx and ctx != float("inf"):
-            candidates.append(int(ctx))
+    # Determine max sequence length
+    max_seq_len = training_config.max_seq_length
+    # Check model and tokenizer limits
+    model_max_len = getattr(model.config, "max_position_embeddings", None)
+    tokenizer_max_len = getattr(tokenizer, "model_max_length", None)
     
-    # Reduce max sequence length to save memory
-    max_seq_len = max(8, min(candidates) if candidates else 1024)
-    max_seq_len = min(max_seq_len, 1024)  # Further reduce to 1024 tokens to save memory
+    # Use the minimum of all available limits
+    candidates = [max_seq_len]
+    if model_max_len:
+        candidates.append(model_max_len)
+    if tokenizer_max_len and tokenizer_max_len != float('inf'):
+        candidates.append(tokenizer_max_len)
     
-    # Force disable packing to save memory
-    use_packing = False
-    logging.info("Packing is disabled to save memory")
-    logging.info(">> Using max sequence length: %d | Packing: %s", max_seq_len, use_packing)
+    max_seq_len = min(candidates) if candidates else 512
+    max_seq_len = min(max_seq_len, 1024)  # Cap at 1024 for memory efficiency
+    training_config.max_seq_length = max_seq_len
+    logging.info(">> Using max sequence length: %d tokens", max_seq_len)
 
-    # LoRA configuration with memory optimization
-    peft_cfg = LoraConfig(
-        r=LORA_RANK,
-        lora_alpha=LORA_ALPHA,
-        lora_dropout=LORA_DROPOUT,
-        target_modules=LORA_TARGET_MODULES,
-        bias="none",
-        task_type="CAUSAL_LM",
-        inference_mode=False,
-    )
-    model = get_peft_model(model, peft_cfg)
-    logging.info(">> LoRA configuration set (r=%d, targets=%s)", LORA_RANK, ",".join(LORA_TARGET_MODULES))
-
-    # Ensure model is in training mode 
+    # Set model to training mode
     model.train()
-    
-    # Enable aggressive memory optimizations
+
+    # Enable memory optimizations
     model.config.use_cache = False
-    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-    torch.backends.cuda.enable_mem_efficient_sdp(False)  # Disable memory-efficient attention
-    torch.backends.cuda.enable_flash_sdp(False)  # Disable flash attention
-    logging.info(">> Gradient checkpointing enabled with reentrant=False")
-    
+    if training_config.gradient_checkpointing:
+        model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
+        logging.info(">> Gradient checkpointing enabled with reentrant=False")
+
     # Print trainable parameters
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
-    logging.info(f">> Trainable parameters: {trainable_params:,} / {total_params:,} ({100 * trainable_params / total_params:.2f}%)")
-    
-    # Enable CPU offload for optimizer states if using QLoRA
-    if USE_QLORA:
-        try:
-            from accelerate import Accelerator
-            from accelerate.utils import set_seed
-            set_seed(42)  # For reproducibility
-            
-            # Initialize accelerator with gradient accumulation
-            accelerator = Accelerator(
-                gradient_accumulation_steps=GRADIENT_ACCUMULATION,
-                mixed_precision='bf16' if not USE_QLORA else 'no'
-            )
-            
-            # Prepare model with accelerator
-            model = accelerator.prepare_model(model)
-            logging.info(">> CPU offload for optimizer states enabled")
-        except Exception as e:
-            logging.warning("Could not enable CPU offload: %s", e)
-    
-    # Verify model parameters require gradients
-    for name, param in model.named_parameters():
-        if 'lora_' in name and not param.requires_grad:
-            logging.warning(f"Parameter {name} does not require gradients!")
+    logging.info(
+        f">> Trainable parameters: {trainable_params:,} / {total_params:,} "
+        f"({100 * trainable_params / total_params:.2f}%)"
+    )
 
-    # Dataset -> texto formateado + EOS
-    logging.info(">> Formatting and validating examples...")
-    
-    def process_dataset(dataset, dataset_name="train"):
-        valid_examples = []
-        invalid_examples = 0
-        
-        for example in dataset:
-            try:
-                if validate_example(example):
-                    formatted = format_example(example, EOS)
-                    valid_examples.append(formatted)
-                else:
-                    invalid_examples += 1
-            except Exception as e:
-                logging.warning(f"Error procesando ejemplo en {dataset_name}: {e}")
-                invalid_examples += 1
-        
-        if invalid_examples > 0:
-            logging.warning("Se encontraron %d ejemplos inválidos en el dataset %s", 
-                          invalid_examples, dataset_name)
-        
-        return valid_examples
-    
-    # Procesar datasets de entrenamiento y validación
-    train_examples = process_dataset(train_raw, "train")
-    eval_examples = process_dataset(eval_raw, "eval")
-    
-    if not train_examples:
-        raise ValueError("No hay ejemplos válidos en el conjunto de entrenamiento")
-        
-    if not eval_examples and len(train_examples) > 10:
-        # Si no hay ejemplos de validación, dividir el train
-        train_examples, eval_examples = train_examples[:-5], train_examples[-5:]
-        logging.info("Usando últimos 5 ejemplos del train para validación")
-    
-    # Convertir a datasets de HF
-    train_ds = Dataset.from_list(train_examples)
-    eval_ds = Dataset.from_list(eval_examples) if eval_examples else None
-    
-    # Expandir dataset si es necesario
-    if len(train_ds) < DATASET_MIN_EXAMPLES:
-        repeat_factor = max(1, math.ceil(DATASET_MIN_EXAMPLES / len(train_ds)))
-        train_ds = concatenate_datasets([train_ds] * repeat_factor).shuffle(seed=DATASET_SHUFFLE_SEED)
-        logging.info(">> Training dataset expandido: %dx -> %d ejemplos", repeat_factor, len(train_ds))
+    # Process data using DataProcessor
+    logging.info(">> Processing dataset...")
+    data_processor = DataProcessor(config=data_config, tokenizer=tokenizer)
+    train_dataset, eval_dataset = data_processor.prepare_datasets_for_sft(
+        tokenizer=tokenizer, shuffle=True, seed=data_config.shuffle_seed
+    )
 
-    logging.info(">> Train samples: %d | Eval samples: %d", len(train_ds), len(eval_ds))
+    # Expand dataset if needed
+    dataset_min_examples = int(os.getenv("FT_DATASET_MIN_EXAMPLES", "100"))
+    train_dataset = expand_dataset_if_needed(
+        train_dataset, dataset_min_examples, seed=data_config.shuffle_seed
+    )
 
-    # Analizar estadísticas del dataset
-    sample_size = min(64, len(train_ds))
-    token_lengths = []
-    total_chars = 0
-    
-    for i in range(sample_size):
-        text = train_ds[i]["text"]
-        tokens = tok(text, return_tensors="pt", truncation=True, max_length=max_seq_len)
-        token_lengths.append(len(tokens["input_ids"][0]))
-        total_chars += len(text)
-    
-    stats = {
-        "avg_tokens": sum(token_lengths) / len(token_lengths) if token_lengths else 0,
-        "max_tokens": max(token_lengths) if token_lengths else 0,
-        "min_tokens": min(token_lengths) if token_lengths else 0,
-        "avg_chars": total_chars / sample_size if sample_size > 0 else 0,
-        "total_examples": len(train_ds)
-    }
-    
-    # Calcular tokens aproximados
-    approx_total_tokens = stats["avg_tokens"] * len(train_ds)
-    
-    # Decidir si usar packing
-    min_examples_for_packing = 64
-    min_tokens_for_packing = max_seq_len * 4
-    
-    use_packing = FORCE_PACKING
-    if FORCE_PACKING:
-        if len(train_ds) < min_examples_for_packing:
-            logging.warning("Packing forzado deshabilitado: dataset muy pequeño (%d < %d ejemplos)", 
-                          len(train_ds), min_examples_for_packing)
-            use_packing = False
-        elif approx_total_tokens < min_tokens_for_packing:
-            logging.warning("Packing forzado deshabilitado: tokens estimados insuficientes (%.0f < %d)", 
-                          approx_total_tokens, min_tokens_for_packing)
-            use_packing = False
-    
-    # Log de estadísticas
+    logging.info(
+        ">> Train samples: %d | Eval samples: %d",
+        len(train_dataset),
+        len(eval_dataset) if eval_dataset else 0,
+    )
+
+    # Calculate dataset statistics
+    stats = calculate_dataset_stats(train_dataset, tokenizer, max_seq_len)
+
+    # Log dataset statistics
     logging.info("📊 Estadísticas del dataset:")
     logging.info(f"  - Ejemplos: {stats['total_examples']}")
-    logging.info(f"  - Tokens/ejemplo: {stats['avg_tokens']:.1f} (min: {stats['min_tokens']}, max: {stats['max_tokens']})")
-    logging.info(f"  - Caracteres/ejemplo: {stats['avg_chars']:.1f}")
-    logging.info(f"  - Tokens totales estimados: {approx_total_tokens:,.0f}")
-    logging.info(f"  - Packing: {'HABILITADO' if use_packing else 'DESHABILITADO'}")
-    
-    if stats['max_tokens'] > max_seq_len * 0.9:
-        logging.warning("¡Atención! Algunos ejemplos están cerca del límite de contexto (%d tokens)", max_seq_len)
-
-    # Configuración de TrainingArguments
-    sft_args = TrainingArguments(
-        output_dir=OUT_DIR,
-        per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
-        gradient_accumulation_steps=GRADIENT_ACCUMULATION,
-        learning_rate=LEARNING_RATE,
-        num_train_epochs=NUM_EPOCHS,
-        logging_steps=LOGGING_STEPS,
-        eval_strategy="steps" if eval_ds else "no",  # Solo evaluar si hay dataset de validación
-        eval_steps=EVAL_STEPS if eval_ds else None,
-        save_strategy="steps",
-        save_steps=SAVE_STEPS,
-        save_total_limit=SAVE_TOTAL_LIMIT,
-        warmup_ratio=WARMUP_RATIO,
-        lr_scheduler_type=LR_SCHEDULER,
-        weight_decay=WEIGHT_DECAY,
-        dataloader_pin_memory=True,
-        report_to=["tensorboard"],
-        logging_dir=os.path.join(OUT_DIR, "logs"),
-        bf16=not USE_QLORA,
-        fp16=False,
-        dataloader_num_workers=2,
-        tf32=True,
-        load_best_model_at_end=bool(eval_ds),  # Solo activar si hay dataset de validación
-        metric_for_best_model="loss" if not eval_ds else "eval_loss",
-        greater_is_better=False,
-        optim="adamw_torch",
-        save_safetensors=True,
+    logging.info(
+        f"  - Tokens/ejemplo: {stats['avg_tokens']:.1f} "
+        f"(min: {stats['min_tokens']}, max: {stats['max_tokens']})"
     )
+    logging.info(f"  - Caracteres/ejemplo: {stats['avg_chars']:.1f}")
+    logging.info(f"  - Tokens totales estimados: {stats['approx_total_tokens']:,.0f}")
+
+    # Determine if packing should be used
+    force_packing = bool(os.getenv("FT_FORCE_PACKING", "false").lower() in ("true", "1", "yes"))
+    use_packing = should_use_packing(train_dataset, stats, max_seq_len, force_packing)
+    logging.info(f"  - Packing: {'HABILITADO' if use_packing else 'DESHABILITADO'}")
+
+    if stats["max_tokens"] > max_seq_len * 0.9:
+        logging.warning(
+            "¡Atención! Algunos ejemplos están cerca del límite de contexto (%d tokens)",
+            max_seq_len,
+        )
+
+    # Prepare evaluation prompts
+    eval_prompts = []
+    if eval_dataset:
+        eval_sample_size = int(os.getenv("FT_EVAL_SAMPLE_SIZE", "3"))
+        sample_n = min(eval_sample_size, len(eval_dataset))
+        for i in range(sample_n):
+            row = eval_dataset[i]
+            # Extract system, input, output from formatted text if needed
+            # For now, use fallback prompts
+            eval_prompts = EVAL_FALLBACK_PROMPTS
+            break
+    if not eval_prompts:
+        eval_prompts = EVAL_FALLBACK_PROMPTS
+
+    # Prepare training arguments
+    training_args_dict = training_config.to_training_args()
+    
+    # Disable bf16 when using QLoRA (QLoRA handles its own quantization)
+    if model_config.load_in_4bit:
+        training_args_dict["bf16"] = False
+        training_args_dict["fp16"] = False
+        logging.info(">> QLoRA enabled: bf16/fp16 disabled (using 4-bit quantization)")
+    
+    # Update with eval dataset configuration
+    if eval_dataset and len(eval_dataset) > 0:
+        training_args_dict["evaluation_strategy"] = "steps"
+        training_args_dict["eval_steps"] = training_config.eval_steps
+        training_args_dict["load_best_model_at_end"] = True
+        training_args_dict["metric_for_best_model"] = "eval_loss"
+    else:
+        training_args_dict["evaluation_strategy"] = "no"
+        training_args_dict["load_best_model_at_end"] = False
+
+    training_args = TrainingArguments(**training_args_dict)
     logging.info(">> Training configuration set")
 
-    # Configuración del entrenamiento
-    try:
-        # Callbacks
-        callbacks = [
+    # Prepare callbacks
+    callbacks = []
+    if training_config.early_stopping and eval_dataset and len(eval_dataset) > 0:
+        callbacks.append(
             EarlyStoppingCallback(
-                early_stopping_patience=3,  # Paciencia de 3 evaluaciones
-                early_stopping_threshold=0.01  # Mejora mínima requerida
+                early_stopping_patience=training_config.early_stopping_patience,
+                early_stopping_threshold=training_config.early_stopping_threshold,
             )
-        ]
-
-        logging.info("🚀 Inicializando SFTTrainer...")
-        
-        # Initialize trainer directly with parameters
-        trainer = SFTTrainer(
-            model=model,
-            tokenizer=tok,
-            train_dataset=train_ds,
-            eval_dataset=eval_ds if eval_ds and len(eval_ds) > 0 else None,
-            args=sft_args,
-            dataset_text_field="text",
-            max_seq_length=max_seq_len,
-            neftune_noise_alpha=5.0,  # Mejora la generalización
-            dataset_num_proc=2,  # Procesamiento en paralelo
-            packing=use_packing,
-            callbacks=callbacks,
         )
-        
-        # Verify model is ready for training
-        logging.info(f">> Model device: {next(trainer.model.parameters()).device}")
-        logging.info(f">> Model training mode: {trainer.model.training}")
-        # Only log requires_grad for float parameters to avoid errors with QLoRA
-        float_params = [p for p in trainer.model.parameters() if p.dtype.is_floating_point]
-        if float_params:
-            logging.info(f">> First float parameter requires_grad: {float_params[0].requires_grad}")
-        else:
-            logging.info(">> No float parameters found in model (expected for QLoRA with 4-bit)")
-        
-        # Validar configuración
-        if trainer.eval_dataset is None:
-            logging.warning("No hay dataset de validación. Se usará un subconjunto del entrenamiento.")
-            
-    except Exception as e:
-        logging.error("Error al inicializar el entrenador: %s", str(e))
-        # Intentar sin packing si falla
-        if use_packing:
-            logging.warning("Reintentando sin packing...")
-            sft_config.packing = False
-            trainer = SFTTrainer(
-                model=model,
-                tokenizer=tok,
-                train_dataset=train_ds,
-                eval_dataset=eval_ds if eval_ds and len(eval_ds) > 0 else None,
-                args=sft_args,
-                config=sft_config,
-                callbacks=callbacks,
-            )
-        else:
-            raise
-    logging.info(">> Trainer initialized")
 
-    os.makedirs(OUT_DIR, exist_ok=True)
+    # Initialize SFTTrainer
+    logging.info("🚀 Inicializando SFTTrainer...")
+
+    sft_trainer_kwargs = {
+        "model": model,
+        "tokenizer": tokenizer,
+        "train_dataset": train_dataset,
+        "eval_dataset": eval_dataset if eval_dataset and len(eval_dataset) > 0 else None,
+        "args": training_args,
+        "dataset_text_field": training_config.dataset_text_field,
+        "max_seq_length": max_seq_len,
+        "packing": use_packing,
+        "callbacks": callbacks,
+    }
+
+    # Add optional SFTTrainer parameters
+    if training_config.neftune_noise_alpha is not None:
+        sft_trainer_kwargs["neftune_noise_alpha"] = training_config.neftune_noise_alpha
+
+    if training_config.dataset_num_proc is not None:
+        sft_trainer_kwargs["dataset_num_proc"] = training_config.dataset_num_proc
+
+    trainer = SFTTrainer(**sft_trainer_kwargs)
+
+    # Verify model is ready for training
+    logging.info(f">> Model device: {next(trainer.model.parameters()).device}")
+    logging.info(f">> Model training mode: {trainer.model.training}")
+
+    # Create output directory
+    os.makedirs(training_config.output_dir, exist_ok=True)
     os.makedirs("logs", exist_ok=True)
 
-    # Resumen de la configuración
-    logging.info("\n" + "="*80)
+    # Log configuration summary
+    logging.info("\n" + "=" * 80)
     logging.info("🚀 INICIANDO ENTRENAMIENTO")
-    logging.info("="*80)
+    logging.info("=" * 80)
     logging.info("📋 Configuración:")
-    logging.info(f"   - Modelo: {MODEL_ID}")
-    logging.info(f"   - Batch size: {sft_args.per_device_train_batch_size} (x{sft_args.gradient_accumulation_steps})")
+    logging.info(f"   - Modelo: {model_config.model_name_or_path}")
+    logging.info(
+        f"   - Batch size: {training_args.per_device_train_batch_size} "
+        f"(x{training_args.gradient_accumulation_steps})"
+    )
     logging.info(f"   - Longitud máxima: {max_seq_len} tokens")
-    logging.info(f"   - Épocas: {sft_args.num_train_epochs}")
-    logging.info(f"   - Tamaño del dataset: {len(train_ds)} entrenamiento, {len(eval_ds) if eval_ds else 0} validación")
-    logging.info(f"   - Learning rate: {sft_args.learning_rate}")
-    logging.info(f"   - Peso de decaimiento: {sft_args.weight_decay}")
-    logging.info(f"   - LoRA r={LORA_RANK}, alpha={LORA_ALPHA}, dropout={LORA_DROPOUT}")
-    logging.info(f"   - QLoRA: {'Sí' if USE_QLORA else 'No'}")
+    logging.info(f"   - Épocas: {training_args.num_train_epochs}")
+    logging.info(
+        f"   - Tamaño del dataset: {len(train_dataset)} entrenamiento, "
+        f"{len(eval_dataset) if eval_dataset else 0} validación"
+    )
+    logging.info(f"   - Learning rate: {training_args.learning_rate}")
+    logging.info(f"   - Peso de decaimiento: {training_args.weight_decay}")
+    logging.info(
+        f"   - LoRA r={model_config.lora_rank}, alpha={model_config.lora_alpha}, "
+        f"dropout={model_config.lora_dropout}"
+    )
+    logging.info(f"   - QLoRA: {'Sí' if model_config.load_in_4bit else 'No'}")
     logging.info(f"   - Packing: {'Sí' if use_packing else 'No'}")
-    logging.info("="*80 + "\n")
+    logging.info("=" * 80 + "\n")
 
-    # Entrenamiento con manejo de errores
+    # Training with error handling
     try:
         logging.info("🏋️ Iniciando entrenamiento...")
         train_result = trainer.train()
-        
-        # Guardar métricas de entrenamiento
+
+        # Save training metrics
         metrics = train_result.metrics
-        metrics["train_samples"] = len(train_ds)
-        
-        # Evaluación final
+        metrics["train_samples"] = len(train_dataset)
+
+        # Final evaluation
         eval_metrics = {}
-        if eval_ds and len(eval_ds) > 0:
+        if eval_dataset and len(eval_dataset) > 0:
             logging.info("📊 Evaluando modelo final...")
             eval_metrics = trainer.evaluate()
             metrics.update({"eval_" + k: v for k, v in eval_metrics.items()})
-        
-        # Guardar métricas
+
+        # Save metrics
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
-        
+
         logging.info("✅ Entrenamiento completado con éxito!")
         logging.info("📊 Métricas de evaluación:")
         for k, v in eval_metrics.items():
             logging.info(f"   - {k}: {v:.4f}")
-            
+
     except RuntimeError as e:
         if "out of memory" in str(e).lower():
-            logging.error("❌ Error: Memoria insuficiente. Intenta reducir el tamaño de batch o secuencia.")
+            logging.error(
+                "❌ Error: Memoria insuficiente. Intenta reducir el tamaño de batch o secuencia."
+            )
         raise
     except Exception as e:
         logging.error(f"❌ Error durante el entrenamiento: {str(e)}")
-        # Guardar el modelo a pesar del error si es posible
+        # Save model despite error if possible
         try:
-            trainer.save_model(OUT_DIR + "_crashed")
-            logging.info(f"Modelo guardado en {OUT_DIR}_crashed")
-        except:
+            trainer.save_model(training_config.output_dir + "_crashed")
+            logging.info(f"Modelo guardado en {training_config.output_dir}_crashed")
+        except Exception:
             pass
         raise
 
+    # Save model
     logging.info(">> Saving model (adapters + tokenizer)...")
-    trainer.model.save_pretrained(OUT_DIR)
-    tok.save_pretrained(OUT_DIR)
+    trainer.model.save_pretrained(training_config.output_dir)
+    tokenizer.save_pretrained(training_config.output_dir)
 
+    # Save training info
     training_info = {
         "script_version": SCRIPT_VERSION,
-        "model_id": MODEL_ID,
-        "dataset_size": len(train_ds),
-        "eval_size": len(eval_ds),
+        "model_id": model_config.model_name_or_path,
+        "dataset_size": len(train_dataset),
+        "eval_size": len(eval_dataset) if eval_dataset else 0,
         "training_time": datetime.now().isoformat(),
         "device": str(device),
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
-        "vram_gb": round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1) if torch.cuda.is_available() else 0,
-        "log_file": os.path.join("logs", DEBUG_LOG_FILE),
+        "vram_gb": round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1)
+        if torch.cuda.is_available()
+        else 0,
+        "log_file": log_path,
         "eval_metrics": eval_metrics,
-        "use_qlora": USE_QLORA,
+        "use_qlora": model_config.load_in_4bit,
     }
-    with open(os.path.join(OUT_DIR, "training_info.json"), "w") as f:
+    with open(
+        os.path.join(training_config.output_dir, "training_info.json"), "w"
+    ) as f:
         json.dump(training_info, f, indent=2)
 
     # Post-train quick eval
-    run_eval(trainer.model, tok, device, eval_prompts)
+    run_eval(trainer.model, tokenizer, device, eval_prompts)
 
-    logging.info("✅ Adaptador LoRA guardado en: %s", OUT_DIR)
+    logging.info("✅ Adaptador LoRA guardado en: %s", training_config.output_dir)
     logging.info("📄 Debug log: %s", log_path)
     logging.info("🎉 Training completed at %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
