@@ -30,6 +30,19 @@ from typing import List, Optional
 from datetime import datetime
 from pathlib import Path
 
+# Add src directory to Python path to enable imports
+# This allows the script to be run from any directory
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+SRC_DIR = PROJECT_ROOT / "src"
+if not SRC_DIR.exists():
+    raise RuntimeError(
+        f"Error: Could not find 'src' directory at {SRC_DIR}. "
+        f"Please ensure you're running this script from the project root directory."
+    )
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
 import torch
 from datasets import Dataset, concatenate_datasets
 from packaging import version
