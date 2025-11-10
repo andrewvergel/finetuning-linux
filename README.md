@@ -1,44 +1,44 @@
-# Fine-tuning LoRA en Ubuntu + RTX 4060 Ti
+# Fine-tuning LoRA on Ubuntu + RTX 4060 Ti
 
-> Proyecto personal documentado como parte de mi portafolio. Implementa un flujo completo de fine-tuning con LoRA/QLoRA sobre modelos modernos (Qwen2.5-7B-Instruct) usando CUDA en Ubuntu, incluyendo preparación del entorno, entrenamiento reproducible y despliegue de inferencia.
+> Personal project documented as part of my portfolio. Implements a complete fine-tuning pipeline with LoRA/QLoRA on modern models (Qwen2.5-7B-Instruct) using CUDA on Ubuntu, including environment setup, reproducible training, and inference deployment.
 
-## ✨ Resumen del Proyecto
-- **Objetivo:** Entrenar un chatbot corporativo capaz de responder procedimientos internos a partir de un dataset de instrucciones propio.
-- **Tecnologías:** Python, PyTorch 2.0+, Transformers 4.40+, PEFT 0.10+, TRL, CUDA 12.1+.
-- **Hardware:** NVIDIA RTX 4060 Ti (16 GB VRAM) en Ubuntu 22.04+.
-- **Características destacadas:**
-  - Soporte para QLoRA 4-bit (optimización de memoria)
-  - Entrenamiento estable con bfloat16
-  - Gradient Checkpointing y optimizaciones de memoria
-  - Early Stopping y evaluación por pasos
-  - Packing de secuencias opcional
-- **Repositorio:** [`andrewvergel/finetuning-linux`](https://github.com/andrewvergel/finetuning-linux)
+## ✨ Project Summary
+- **Objective:** Train a corporate chatbot capable of responding to internal procedures from a custom instruction dataset.
+- **Technologies:** Python, PyTorch 2.0+, Transformers 4.40+, PEFT 0.10+, TRL, CUDA 12.1+.
+- **Hardware:** NVIDIA RTX 4060 Ti (16 GB VRAM) on Ubuntu 22.04+.
+- **Key Features:**
+  - Support for QLoRA 4-bit (memory optimization)
+  - Stable training with bfloat16
+  - Gradient Checkpointing and memory optimizations
+  - Early Stopping and step-based evaluation
+  - Optional sequence packing
+- **Repository:** [`andrewvergel/finetuning-linux`](https://github.com/andrewvergel/finetuning-linux)
 
-## 🧱 Arquitectura y Flujo
-1. **Bootstrap de entorno** – instalación de drivers, CUDA y dependencias en un equipo limpio.
-2. **Dataset JSONL** – prompts internos versionados en `data/instructions.jsonl`.
-3. **Script de entrenamiento** – `scripts/finetune_lora.py` (v2.0.0) utiliza clases de configuración estructuradas y realiza duplicación inteligente del dataset y ajusta hiperparámetros para escenarios de pocos datos.
-4. **Inferencia controlada** – `scripts/inference_lora.py` (v1.0.2) con decodificación determinista para evaluar resultados.
-5. **Reportes** – se genera `training_info.json` con metadatos del entrenamiento.
+## 🧱 Architecture and Flow
+1. **Environment bootstrap** – installation of drivers, CUDA and dependencies on a clean system.
+2. **JSONL Dataset** – internal prompts versioned in `data/instructions.jsonl`.
+3. **Training script** – `scripts/finetune_lora.py` (v2.0.0) uses structured configuration classes and performs intelligent dataset duplication and adjusts hyperparameters for low-data scenarios.
+4. **Controlled inference** – `scripts/inference_lora.py` (v1.0.2) with deterministic decoding to evaluate results.
+5. **Reports** – generates `training_info.json` with training metadata.
 
-## 🚀 Puesta en Marcha desde Cero
+## 🚀 Getting Started from Scratch
 
 ### Quick Start (Local Development)
 
 ```bash
-# 1. Clonar el repositorio
+# 1. Clone the repository
 git clone https://github.com/andrewvergel/finetuning-linux.git
 cd finetuning-linux
 
-# 2. Crear y activar entorno virtual
+# 2. Create and activate virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
-# 3. Instalar dependencias base
+# 3. Install base dependencies
 pip install --upgrade pip setuptools wheel
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-# 4. Instalar dependencias del proyecto
+# 4. Install project dependencies
 pip install "numpy<2.0" pyarrow==14.0.1
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,expandable_segments:True
 pip install -r requirements.txt
@@ -58,72 +58,72 @@ The deployment guide covers:
 - Automation and scheduling
 
 > 💡 **New in v2.0.0:** The script has been refactored to use structured configuration classes (`ModelConfig`, `TrainingConfig`, `DataConfig`) for better code organization and maintainability.
-> 📦 `requirements.txt` incluye todas las librerías auxiliares; aun así, instalamos `numpy<2.0` y `pyarrow==14.0.1` antes para evitar conflictos conocidos con `datasets` (error `PyExtensionType`).
-> 🔍 Antes de entrenar, puedes ejecutar `python scripts/validate_environment.py` para verificar versiones de Python, CUDA, VRAM disponible, dataset y dependencias.
-> 🧩 Para modelos Qwen2.5 asegúrate de usar `transformers>=4.40` y `peft>=0.10` (ya fijados en `requirements.txt`).
-> 🧾 Cada entrenamiento deja un log detallado en `logs/debug_last_run.log` con métricas y respuestas de validación automática.
+> 📦 `requirements.txt` includes all auxiliary libraries; however, we install `numpy<2.0` and `pyarrow==14.0.1` first to avoid known conflicts with `datasets` (`PyExtensionType` error).
+> 🔍 Before training, you can run `python scripts/validate_environment.py` to verify Python versions, CUDA, available VRAM, dataset and dependencies.
+> 🧩 For Qwen2.5 models, make sure to use `transformers>=4.40` and `peft>=0.10` (already fixed in `requirements.txt`).
+> 🧾 Each training run leaves a detailed log in `logs/debug_last_run.log` with metrics and automatic validation responses.
 
-## 📚 Dataset de Instrucciones
+## 📚 Instruction Dataset
 ```bash
 mkdir -p data
 cat > data/instructions.jsonl << 'JSONL'
-{"system":"Eres un asistente experto en procesos internos.","input":"Dame los pasos para conciliar pagos de los lunes.","output":"1) Exporta el CSV del banco.\n2) Ejecuta el job 'reconcile_monday'.\n3) Revisa discrepancias en la tabla 'recon_issues'."}
-{"system":"Habla en tono profesional y conciso.","input":"Resume este procedimiento en tres bullets.","output":"• Exportar CSV.\n• Ejecutar job.\n• Validar discrepancias."}
-{"system":"Responde siempre con pasos numerados.","input":"¿Cómo abro un ticket de soporte?","output":"1) Entra al helpdesk.\n2) Crea ticket 'Incidente'.\n3) Adjunta evidencias."}
+{"system":"You are an expert assistant in internal processes.","input":"Give me the steps to reconcile Monday payments.","output":"1) Export the CSV from the bank.\n2) Run the 'reconcile_monday' job.\n3) Review discrepancies in the 'recon_issues' table."}
+{"system":"Speak in a professional and concise tone.","input":"Summarize this procedure in three bullets.","output":"• Export CSV.\n• Run job.\n• Validate discrepancies."}
+{"system":"Always respond with numbered steps.","input":"How do I open a support ticket?","output":"1) Go to the helpdesk.\n2) Create 'Incident' ticket.\n3) Attach evidence."}
 JSONL
 ```
-> ℹ️ `data/instructions.jsonl` **ya viene versionado en este repositorio** y es el único archivo permitido dentro de `data/`. El script de entrenamiento duplica automáticamente el dataset si detecta menos de 200 muestras, pero se recomienda ampliarlo manualmente con más casuísticas para mejorar la diversidad de respuestas.
+> ℹ️ `data/instructions.jsonl` **is already versioned in this repository** and is the only file allowed inside `data/`. The training script automatically duplicates the dataset if it detects fewer than 200 samples, but it's recommended to manually expand it with more cases to improve response diversity.
 
-## 🛠️ Script de Entrenamiento (`scripts/finetune_lora.py` v2.0.0)
+## 🛠️ Training Script (`scripts/finetune_lora.py` v2.0.0)
 
-### Cambios en v2.0.0
-- **Refactorizado para usar clases de configuración estructuradas**: `ModelConfig`, `TrainingConfig`, `DataConfig`
-- **Uso de `ModelBuilder`**: Carga de modelos centralizada y reutilizable
-- **Uso de `DataProcessor`**: Procesamiento de datos centralizado
-- **Mejor separación de concerns**: Código más mantenible y testeable
-- **Mantiene toda la funcionalidad anterior**: Compatible con configuraciones existentes
+### Changes in v2.0.0
+- **Refactored to use structured configuration classes**: `ModelConfig`, `TrainingConfig`, `DataConfig`
+- **Use of `ModelBuilder`**: Centralized and reusable model loading
+- **Use of `DataProcessor`**: Centralized data processing
+- **Better separation of concerns**: More maintainable and testable code
+- **Maintains all previous functionality**: Compatible with existing configurations
 
-### Características Principales
-- **Modelo Base:** `Qwen/Qwen2.5-7B-Instruct` por defecto (soporta cualquier modelo compatible con Transformers)
-- **Optimizaciones de Memoria:**
-  - QLoRA 4-bit activable vía `FT_USE_QLORA=1`
+### Main Features
+- **Base Model:** `Qwen/Qwen2.5-7B-Instruct` by default (supports any Transformers-compatible model)
+- **Memory Optimizations:**
+  - QLoRA 4-bit activatable via `FT_USE_QLORA=1`
   - Gradient Checkpointing
-  - bfloat16 por defecto (óptimo para GPUs Ada/Lovelace)
-  - Packing de secuencias opcional (`FT_FORCE_PACKING`)
-- **Entrenamiento Estable:**
-  - Early Stopping basado en pérdida de validación
-  - Evaluación por pasos configurables (`FT_EVAL_STEPS`)
-  - Guardado de checkpoints incremental
-  - Logs detallados en `logs/debug_last_run.log`
-- **Configuración Flexible:**
-  - Todas las opciones configurables mediante variables de entorno `FT_*`
-  - Soporte para múltiples objetivos LoRA
-  - Batch size y acumulación de gradientes configurables
+  - bfloat16 by default (optimal for Ada/Lovelace GPUs)
+  - Optional sequence packing (`FT_FORCE_PACKING`)
+- **Stable Training:**
+  - Early Stopping based on validation loss
+  - Configurable step-based evaluation (`FT_EVAL_STEPS`)
+  - Incremental checkpoint saving
+  - Detailed logs in `logs/debug_last_run.log`
+- **Flexible Configuration:**
+  - All options configurable via `FT_*` environment variables
+  - Support for multiple LoRA targets
+  - Configurable batch size and gradient accumulation
 
-### Flujo de Entrenamiento
-1. Carga y validación del dataset desde `data/instructions.jsonl`
-2. División automática entrenamiento/validación (85/15% por defecto)
-3. Carga del modelo base con optimizaciones de memoria
-4. Aplicación de LoRA/QLoRA según configuración
-5. Entrenamiento con monitoreo de métricas
-6. Evaluación periódica y guardado de checkpoints
-7. Generación de informe final con ejemplos de inferencia
+### Training Flow
+1. Load and validate dataset from `data/instructions.jsonl`
+2. Automatic train/validation split (85/15% by default)
+3. Load base model with memory optimizations
+4. Apply LoRA/QLoRA according to configuration
+5. Training with metric monitoring
+6. Periodic evaluation and checkpoint saving
+7. Generate final report with inference examples
 
-### 🧾 Configuración Recomendada (`.env`)
+### 🧾 Recommended Configuration (`.env`)
 
 ```bash
-# Modelo y Datos
+# Model and Data
 FT_MODEL_ID=Qwen/Qwen2.5-7B-Instruct
 FT_DATA_PATH=data/instructions.jsonl
 FT_OUT_DIR=models/out-qlora
-FT_TRUST_REMOTE_CODE=1  # Requerido para Qwen2.5
+FT_TRUST_REMOTE_CODE=1  # Required for Qwen2.5
 
-# Optimización de Memoria
-FT_USE_QLORA=1           # Activar QLoRA 4-bit
-FT_FORCE_PACKING=0       # Desactivar packing por defecto (más memoria)
+# Memory Optimization
+FT_USE_QLORA=1           # Enable QLoRA 4-bit
+FT_FORCE_PACKING=0       # Disable packing by default (more memory)
 FT_GRADIENT_CHECKPOINTING=1
 
-# Hiperparámetros de Entrenamiento
+# Training Hyperparameters
 FT_PER_DEVICE_BATCH_SIZE=1
 FT_GRADIENT_ACCUMULATION=8
 FT_NUM_EPOCHS=5
@@ -132,111 +132,111 @@ FT_WARMUP_RATIO=0.1
 FT_LR_SCHEDULER=cosine_with_restarts
 FT_WEIGHT_DECAY=0.02
 
-# Configuración LoRA
+# LoRA Configuration
 FT_LORA_RANK=8
 FT_LORA_ALPHA=16
 FT_LORA_DROPOUT=0.05
 FT_LORA_TARGET_MODULES=q_proj,v_proj
 
-# Validación y Guardado
+# Validation and Saving
 FT_EVAL_STEPS=25
 FT_SAVE_STEPS=25
 FT_SAVE_TOTAL_LIMIT=2
 FT_EVAL_MAX_NEW_TOKENS=128
 FT_EVAL_SAMPLE_SIZE=3
 
-# Otros
+# Others
 FT_LOGGING_STEPS=10
 FT_DATASET_SHUFFLE_SEED=42
 FT_VALIDATION_SPLIT=0.15
 FT_DEBUG_LOG_FILE=debug_last_run.log
 ```
-> Duplica el archivo como `.env` y personaliza los valores si necesitas cambiar cualquier hiperparámetro sin editar el script.
+> Copy the file as `.env` and customize the values if you need to change any hyperparameter without editing the script.
 
-### 🔍 Interpretación de logs y tuning
-#### Pérdida de entrenamiento
-- Valores de `loss` entre **4.0–5.0** son típicos para DialoGPT con datasets repetidos. Si cae de ~5.2 a ~4.1 en pocas épocas, la convergencia va bien. Si la pérdida se estanca >3.8 tras 20 épocas, considera subir `LEARNING_RATE` o reducir `LORA_DROPOUT`.
-#### Learning rate efectivo
-- Con `LEARNING_RATE = 4e-5` deberías ver valores ~3.9e-05 a 4.0e-05 en los logs. Si cae demasiado rápido (<3e-05) en las primeras épocas, sube `WARMUP_RATIO`.
-#### Señales de overfitting
-- Pérdida de entrenamiento baja, pero validación no mejora o sube → sube `LORA_DROPOUT` o baja `NUM_EPOCHS`.
-#### Si el modelo delira
-- Repite frases, respuestas circulares o incoherentes → sube `LORA_DROPOUT` a 0.2, baja `NUM_EPOCHS` a 20, y añade más ejemplos únicos al dataset.
+### 🔍 Log Interpretation and Tuning
+#### Training Loss
+- `loss` values between **4.0–5.0** are typical for DialoGPT with repeated datasets. If it drops from ~5.2 to ~4.1 in a few epochs, convergence is going well. If loss plateaus >3.8 after 20 epochs, consider increasing `LEARNING_RATE` or reducing `LORA_DROPOUT`.
+#### Effective Learning Rate
+- With `LEARNING_RATE = 4e-5` you should see values ~3.9e-05 to 4.0e-05 in the logs. If it drops too quickly (<3e-05) in the first epochs, increase `WARMUP_RATIO`.
+#### Overfitting Signals
+- Low training loss, but validation doesn't improve or increases → increase `LORA_DROPOUT` or decrease `NUM_EPOCHS`.
+#### If the Model Hallucinates
+- Repeats phrases, circular or incoherent responses → increase `LORA_DROPOUT` to 0.2, decrease `NUM_EPOCHS` to 20, and add more unique examples to the dataset.
 
-#### Fases avanzadas del entrenamiento (épocas 20+)
-- Si ves `loss` ~2.0 estable y `learning_rate` ~3e-06, el modelo está cerca del mínimo. 
-- Continuar entrenando puede llevar a **overfitting sutil** (responde mejor a ejemplos de entrenamiento pero falla en variaciones). 
-- **Criterio de parada:** si `eval_loss` deja de bajar por 3–4 épocas seguidas, detén el entrenamiento. 
-- **Si necesitas más calidad:** en lugar de más épocas, amplía el dataset real (no repitas) o prueba un modelo base mayor.
+#### Advanced Training Phases (epochs 20+)
+- If you see stable `loss` ~2.0 and `learning_rate` ~3e-06, the model is near the minimum. 
+- Continuing training can lead to **subtle overfitting** (responds better to training examples but fails on variations). 
+- **Stopping criterion:** if `eval_loss` stops decreasing for 3–4 consecutive epochs, stop training. 
+- **If you need more quality:** instead of more epochs, expand the real dataset (don't repeat) or try a larger base model.
 
-#### ✅ Señales de progreso saludable (épocas 1–5)
-- `learning_rate` debería subir de ~6e-06 a ~3e-05 durante las primeras épocas (indica warmup funcionando).
-- `eval_loss` debe bajar de forma consistente (ej.: 7.8 → 6.9 entre época 1 y 3).
-- `loss` de entrenamiento entre 7.0–8.5 al inicio, bajando gradualmente.
+#### ✅ Healthy Progress Signals (epochs 1–5)
+- `learning_rate` should rise from ~6e-06 to ~3e-05 during the first epochs (indicates warmup working).
+- `eval_loss` should decrease consistently (e.g., 7.8 → 6.9 between epoch 1 and 3).
+- Training `loss` between 7.0–8.5 at start, gradually decreasing.
 
-### 🎯 Guía de Ajuste de Hiperparámetros
+### 🎯 Hyperparameter Tuning Guide
 
-#### Optimización de Memoria (RTX 4060 Ti 16GB)
-- **`FT_USE_QLORA` (1):** Activa cuantización 4-bit (recomendado para modelos >7B)
-- **`FT_PER_DEVICE_BATCH_SIZE` (1):** Mantener en 1 para máxima estabilidad
-- **`FT_GRADIENT_ACCUMULATION` (8):** Ajustar según VRAM disponible (más alto = mejor uso de GPU)
-- **`FT_FORCE_PACKING` (0):** Desactivado por defecto (usa más memoria pero más estable)
+#### Memory Optimization (RTX 4060 Ti 16GB)
+- **`FT_USE_QLORA` (1):** Enable 4-bit quantization (recommended for models >7B)
+- **`FT_PER_DEVICE_BATCH_SIZE` (1):** Keep at 1 for maximum stability
+- **`FT_GRADIENT_ACCUMULATION` (8):** Adjust according to available VRAM (higher = better GPU usage)
+- **`FT_FORCE_PACKING` (0):** Disabled by default (uses more memory but more stable)
 
-#### Rendimiento del Entrenamiento
-- **`FT_LORA_RANK` (8):** Dimensión de las matrices de bajo rango
-  - *Aumentar* (16-32) para tareas complejas
-  - *Reducir* (4-8) si hay problemas de memoria
-- **`FT_LEARNING_RATE` (2e-5):** Tasa de aprendizaje base
-  - *Aumentar* (3e-5) si la pérdida se estanca
-  - *Reducir* (1e-5) si la pérdida es inestable
-- **`FT_LORA_ALPHA` (16):** Factor de escalado (normalmente 2× rank)
+#### Training Performance
+- **`FT_LORA_RANK` (8):** Dimension of low-rank matrices
+  - *Increase* (16-32) for complex tasks
+  - *Reduce* (4-8) if there are memory issues
+- **`FT_LEARNING_RATE` (2e-5):** Base learning rate
+  - *Increase* (3e-5) if loss plateaus
+  - *Reduce* (1e-5) if loss is unstable
+- **`FT_LORA_ALPHA` (16):** Scaling factor (typically 2× rank)
 
-#### Regularización
-- **`FT_LORA_DROPOUT` (0.05):** Regularización para evitar sobreajuste
-  - *Aumentar* (0.1-0.2) si el modelo memoriza
-  - *Reducir* (0.01) si el aprendizaje es lento
-- **`FT_WEIGHT_DECAY` (0.02):** Decaimiento de pesos
-  - *Aumentar* (0.05) para más regularización
-  - *Reducir* (0.01) si el modelo no converge
+#### Regularization
+- **`FT_LORA_DROPOUT` (0.05):** Regularization to avoid overfitting
+  - *Increase* (0.1-0.2) if the model memorizes
+  - *Reduce* (0.01) if learning is slow
+- **`FT_WEIGHT_DECAY` (0.02):** Weight decay
+  - *Increase* (0.05) for more regularization
+  - *Reduce* (0.01) if the model doesn't converge
 
-#### Evaluación
-- **`FT_EVAL_STEPS` (25):** Frecuencia de evaluación
-- **`FT_EVAL_SAMPLE_SIZE` (3):** Número de ejemplos para evaluación rápida
-- **`FT_EVAL_MAX_NEW_TOKENS` (128):** Longitud máxima de generación en evaluación
+#### Evaluation
+- **`FT_EVAL_STEPS` (25):** Evaluation frequency
+- **`FT_EVAL_SAMPLE_SIZE` (3):** Number of examples for quick evaluation
+- **`FT_EVAL_MAX_NEW_TOKENS` (128):** Maximum generation length in evaluation
 
-## 💬 Script de Inferencia (`scripts/inference_lora.py`)
-- Carga el adaptador LoRA desde `models/out-tinyllama-lora`.
-- Usa decodificación determinista (sin muestreo) para validar fácilmente regresiones.
-- Incluye loop interactivo opcional y estadísticas de uso de GPU.
+## 💬 Inference Script (`scripts/inference_lora.py`)
+- Loads the LoRA adapter from `models/out-tinyllama-lora`.
+- Uses deterministic decoding (no sampling) to easily validate regressions.
+- Includes optional interactive loop and GPU usage statistics.
 
-## ▶️ Ejecución
+## ▶️ Execution
 ```bash
-# Entrenamiento
+# Training
 python scripts/finetune_lora.py
 
-# Inferencia inicial
+# Initial inference
 python scripts/inference_lora.py
 ```
-> El entrenamiento guarda pesos LoRA en `models/out-tinyllama-lora`. Puedes fusionarlos con el modelo base usando `scripts/merge_adapter.py` si necesitas un único checkpoint.
+> Training saves LoRA weights in `models/out-tinyllama-lora`. You can merge them with the base model using `scripts/merge_adapter.py` if you need a single checkpoint.
 
-## 🧩 Estructura del Proyecto
+## 🧩 Project Structure
 ```
 finetuning-linux/
 ├── data/
-│   └── instructions.jsonl           # Dataset versionado
+│   └── instructions.jsonl           # Versioned dataset
 ├── logs/
-│   └── debug_last_run.log          # Log detallado del último entrenamiento
-├── models/                          # Salidas de entrenamiento (ignorado en git)
-│   └── out-qlora/                  # Checkpoints del modelo
-│       ├── adapter_model.bin       # Pesos del adaptador LoRA
-│       ├── config.json             # Configuración del modelo
-│       └── training_info.json      # Métricas y metadatos
+│   └── debug_last_run.log          # Detailed log of last training run
+├── models/                          # Training outputs (ignored in git)
+│   └── out-qlora/                  # Model checkpoints
+│       ├── adapter_model.bin       # LoRA adapter weights
+│       ├── config.json             # Model configuration
+│       └── training_info.json      # Metrics and metadata
 ├── scripts/
-│   ├── finetune_lora.py            # Entrenamiento LoRA/QLoRA (v1.2.0)
-│   ├── inference_lora.py           # Inferencia con adaptadores
-│   ├── merge_adapter.py            # Fusión de adaptadores con el modelo base
-│   └── validate_environment.py     # Verificación del entorno
-├── .env.example                    # Plantilla de configuración
+│   ├── finetune_lora.py            # LoRA/QLoRA training (v1.2.0)
+│   ├── inference_lora.py           # Inference with adapters
+│   ├── merge_adapter.py            # Merge adapters with base model
+│   └── validate_environment.py     # Environment verification
+├── .env.example                    # Configuration template
 ├── .gitignore
-└── README.md                       # Este documento
+└── README.md                       # This document
 ```
