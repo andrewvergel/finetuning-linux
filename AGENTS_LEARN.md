@@ -842,3 +842,335 @@ When migrating from dataclass + Pydantic Fields to Pydantic BaseModel:
    - Most changes are syntactic
    - Logic remains the same
    - Tests help verify correctness
+
+## 18. SFTTrainer Tokenization Errors: Critical Fixes and Best Practices
+
+### 18.1 The remove_unused_columns Issue with SFTTrainer
+- **Critical Issue**: `remove_unused_columns=False` causes "excessive nesting" error when using SFTTrainer with non-packed datasets
+- **Root Cause**: When `remove_unused_columns=False`, the `text` field remains in the dataset after SFTTrainer tokenizes it internally. The data collator then tries to pad both:
+  - Tokenized fields (`input_ids`, `attention_mask`) - lists of integers
+  - The `text` field - a string
+- **Symptom**: `ValueError: Unable to create tensor, you should probably activate truncation and/or padding with 'padding=True' 'truncation=True' to have batched tensors with the same length. Perhaps your features (`text` in this case) have excessive nesting (inputs type `list` where type `int` is expected).`
+- **Error Location**: Occurs in the data collator during padding when trying to batch examples
+- **Solution**: Set `remove_unused_columns=True` for SFTTrainer when `packing=False`
+- **Best Practice**: SFTTrainer handles tokenization internally and will automatically remove the `text` field after tokenization when `remove_unused_columns=True`
+- **Example**:
+  ```python
+  # CRITICAL FIX: For SFTTrainer with non-packed datasets
+  if not use_packing:
+      training_args_dict["remove_unused_columns"] = True
+      logging.info(">> Set remove_unused_columns=True for SFTTrainer (required for non-packed datasets)")
+  ```
+
+### 18.2 Dataset Text Field Validation
+- **Issue**: SFTTrainer expects the `text` field to be a plain string, but nested structures can cause tokenization errors
+- **Solution**: Add comprehensive validation to ensure text fields are always plain strings
+- **Implementation**: Validate both during dataset preparation and before training
+- **Best Practice**: 
+  - Validate text field format after formatting examples
+  - Check multiple examples before training starts
+  - Test tokenization on a sample to catch issues early
+- **Example**:
+  ```python
+  # Validate dataset structure before returning
+  def validate_text_field(example):
+      """Validate text field format - raises error if invalid."""
+      if "text" not in example:
+          raise ValueError(f"Example missing 'text' field")
+      
+      text = example["text"]
+      
+      # Check for nested structures
+      if isinstance(text, list):
+          raise ValueError(f"Text field contains a list (nested structure)")
+      
+      # Ensure it's a string
+      if not isinstance(text, str):
+          raise ValueError(f"Text field must be a string, got {type(text)}")
+      
+      # Ensure it's non-empty
+      if not text.strip():
+          raise ValueError("Text field is empty after processing")
+      
+      return example  # Return as-is, don't modify
+  ```
+
+### 18.3 Tokenizer Configuration for SFTTrainer
+- **Critical Settings**: SFTTrainer requires proper tokenizer configuration
+- **Required Configuration**:
+  - `pad_token` must be set (use `eos_token` if not available)
+  - `pad_token_id` must be set
+  - `padding_side` should be "right" for causal LM
+  - `truncation_side` should be "right" for causal LM
+- **Best Practice**: Verify tokenizer configuration before initializing SFTTrainer
+- **Example**:
+  ```python
+  # Ensure tokenizer has pad_token set
+  if tokenizer.pad_token is None:
+      tokenizer.pad_token = tokenizer.eos_token
+  
+  # Ensure pad_token_id is set
+  if not hasattr(tokenizer, 'pad_token_id') or tokenizer.pad_token_id is None:
+      tokenizer.pad_token_id = tokenizer.eos_token_id
+  
+  # Configure padding/truncation sides
+  tokenizer.padding_side = "right"
+  tokenizer.truncation_side = "right"
+  ```
+
+### 18.4 Data Collator Configuration
+- **Critical**: Do NOT provide a custom data collator when using SFTTrainer with text fields
+- **Reason**: SFTTrainer handles tokenization internally and creates its own data collator
+- **Issue**: Providing a custom data collator can interfere with SFTTrainer's tokenization process
+- **Best Practice**: Only use a custom data collator if you're pre-tokenizing the data yourself
+- **Example**:
+  ```python
+  # NOTE: SFTTrainer handles tokenization internally
+  # We should NOT provide a data_collator when using SFTTrainer with text fields
+  # SFTTrainer will create its own data collator that handles tokenization
+  # Providing a custom data collator can interfere with SFTTrainer's tokenization
+  # Only use a custom data collator if you're pre-tokenizing the data yourself
+  ```
+
+## 19. LoRA Fine-Tuning Hyperparameter Optimization
+
+### 19.1 Learning Rate for LoRA
+- **Critical**: LoRA requires much lower learning rates than full fine-tuning
+- **Best Practice Range**: 1e-5 to 5e-5 (typically 2e-5)
+- **Issue**: Using full fine-tuning learning rates (e.g., 2e-4) can cause:
+  - Unstable training
+  - Poor convergence
+  - Overfitting
+- **Solution**: Reduce learning rate to LoRA-appropriate values
+- **Example**:
+  ```python
+  # Bad: Too high for LoRA
+  learning_rate: float = 2e-4
+  
+  # Good: Appropriate for LoRA
+  learning_rate: float = 2e-5  # LoRA best practice: 1e-5 to 5e-5
+  ```
+
+### 19.2 Warmup Ratio
+- **Issue**: Too little warmup (e.g., 3%) can cause training instability at the start
+- **Best Practice**: Use 10% warmup for better stability
+- **Solution**: Increase warmup_ratio from 0.03 to 0.1
+- **Rationale**: Warmup helps the model adapt gradually to the new task, especially important for LoRA
+
+### 19.3 Gradient Accumulation
+- **Purpose**: Increases effective batch size without increasing memory usage
+- **Best Practice**: Use gradient accumulation to achieve effective batch size of 8-16
+- **Calculation**: Effective batch size = `per_device_batch_size × gradient_accumulation_steps × num_gpus`
+- **Example**:
+  ```python
+  per_device_train_batch_size: int = 4
+  gradient_accumulation_steps: int = 2  # Effective batch size = 4 × 2 = 8
+  ```
+
+### 19.4 Number of Epochs
+- **Issue**: Too few epochs (e.g., 3) may not allow the model to fully converge
+- **Best Practice**: Use 5-10 epochs for LoRA fine-tuning
+- **Consideration**: Monitor for overfitting, especially with small datasets
+- **Solution**: Increase epochs from 3 to 5, with early stopping to prevent overfitting
+
+### 19.5 Evaluation and Saving Frequency
+- **Issue**: Infrequent evaluation (e.g., every 100 steps) makes it hard to monitor training progress
+- **Best Practice**: Evaluate and save more frequently, especially for small datasets
+- **Solution**: Reduce eval_steps and save_steps from 100 to 50
+- **Benefit**: Better monitoring, more checkpoints to choose from, earlier detection of issues
+
+### 19.6 Early Stopping Configuration
+- **Issue**: Too aggressive early stopping (patience=3) can stop training too early
+- **Best Practice**: Increase patience for small datasets (5-7 epochs)
+- **Threshold**: Use a small threshold (0.001) to avoid stopping on tiny fluctuations
+- **Solution**:
+  ```python
+  early_stopping_patience: int = 5  # Increased from 3
+  early_stopping_threshold: float = 0.001  # Small threshold to avoid stopping too early
+  ```
+
+### 19.7 NEFTune for Better Generalization
+- **What is NEFTune**: Noise-enhanced fine-tuning technique that improves generalization
+- **Best Practice**: Enable NEFTune with alpha=0.1-0.3 for better model performance
+- **Benefit**: Helps prevent overfitting and improves model generalization
+- **Solution**:
+  ```python
+  neftune_noise_alpha: Optional[float] = 0.1  # Enable NEFTune (recommended: 0.1-0.3)
+  ```
+
+### 19.8 Optimized Training Configuration Summary
+- **Learning Rate**: 2e-5 (reduced from 2e-4)
+- **Epochs**: 5 (increased from 3)
+- **Gradient Accumulation**: 2 (increased from 1)
+- **Warmup Ratio**: 0.1 (increased from 0.03)
+- **Eval Steps**: 50 (reduced from 100)
+- **Save Steps**: 50 (reduced from 100)
+- **Save Total Limit**: 3 (increased from 2)
+- **Early Stopping Patience**: 5 (increased from 3)
+- **Early Stopping Threshold**: 0.001 (increased from 0.0)
+- **NEFTune**: 0.1 (enabled, was None)
+
+## 20. Inference Generation Parameter Warnings
+
+### 20.1 The top_k Warning with Greedy Decoding
+- **Issue**: When `do_sample=False` (greedy decoding), passing `top_k` parameter causes warnings
+- **Symptom**: `UserWarning: 'do_sample' is set to 'False'. However, 'top_k' is set to '20' -- this flag is only used in sample-based generation modes.`
+- **Root Cause**: Model's `generation_config` may have `top_k` set by default, which conflicts with greedy decoding
+- **Solution**: Conditionally include sampling parameters only when `do_sample=True`, and temporarily disable `top_k` in model's generation_config for greedy decoding
+- **Best Practice**: Build generation kwargs conditionally based on sampling mode
+- **Example**:
+  ```python
+  # Build generation kwargs - only include sampling parameters when do_sample=True
+  generation_kwargs = {
+      "max_new_tokens": MAX_NEW_TOKENS,
+      "repetition_penalty": REPETITION_PENALTY,
+      "eos_token_id": tokenizer.eos_token_id,
+      "pad_token_id": tokenizer.pad_token_id,
+      # ... other common parameters
+  }
+  
+  # Only add sampling parameters when do_sample=True
+  if DO_SAMPLE:
+      generation_kwargs.update({
+          "do_sample": True,
+          "temperature": TEMPERATURE,
+          "top_p": TOP_P,
+      })
+  else:
+      # Greedy decoding - disable top_k in model's generation_config
+      generation_kwargs["do_sample"] = False
+      if hasattr(model, "generation_config") and model.generation_config is not None:
+          original_top_k = getattr(model.generation_config, "top_k", None)
+          if original_top_k is not None:
+              model.generation_config._original_top_k = original_top_k
+              model.generation_config.top_k = None  # Disable to avoid warning
+  ```
+
+### 20.2 Restoring Model Configuration
+- **Critical**: Always restore model's generation_config after generation to avoid side effects
+- **Best Practice**: Use try/finally to ensure restoration even if generation fails
+- **Example**:
+  ```python
+  try:
+      with torch.no_grad():
+          gen = model.generate(**inputs, **generation_kwargs)
+  finally:
+      # Restore original top_k if we modified it
+      if not DO_SAMPLE and hasattr(model, "generation_config"):
+          if hasattr(model.generation_config, "_original_top_k"):
+              model.generation_config.top_k = model.generation_config._original_top_k
+              delattr(model.generation_config, "_original_top_k")
+  ```
+
+## 21. Key Takeaways from SFTTrainer and Training Optimization
+
+1. **remove_unused_columns is Critical for SFTTrainer**
+   - Always set `remove_unused_columns=True` when using SFTTrainer with non-packed datasets
+   - This allows SFTTrainer to properly remove the `text` field after tokenization
+   - Failure to do this causes "excessive nesting" errors in the data collator
+
+2. **Validate Dataset Structure Thoroughly**
+   - Validate text fields are plain strings (not nested structures)
+   - Test tokenization on sample data before training
+   - Check multiple examples to ensure consistency
+   - Add validation at multiple stages (preparation, before training)
+
+3. **LoRA Requires Different Hyperparameters**
+   - Use much lower learning rates (1e-5 to 5e-5, not 1e-4+)
+   - Increase warmup ratio to 10% for stability
+   - Use gradient accumulation to increase effective batch size
+   - Monitor for overfitting with small datasets
+
+4. **Configure Tokenizer Properly**
+   - Ensure pad_token and pad_token_id are set
+   - Configure padding_side and truncation_side correctly
+   - Verify configuration before training starts
+
+5. **Don't Interfere with SFTTrainer's Tokenization**
+   - Don't provide custom data collators unless pre-tokenizing
+   - Let SFTTrainer handle tokenization internally
+   - Trust SFTTrainer's internal mechanisms
+
+6. **Conditional Generation Parameters**
+   - Only include sampling parameters (temperature, top_p, top_k) when do_sample=True
+   - Temporarily disable conflicting parameters in model's generation_config
+   - Always restore original configuration after generation
+
+7. **Enable NEFTune for Better Results**
+   - NEFTune improves generalization and prevents overfitting
+   - Use alpha values between 0.1-0.3
+   - Particularly beneficial for small datasets
+
+8. **Monitor Training More Frequently**
+   - Use more frequent evaluation (every 50 steps instead of 100)
+   - Save checkpoints more frequently
+   - Keep more checkpoints for comparison
+   - This helps catch issues early and select best model
+
+## 22. Small Dataset Deep Learning: Adaptive Hyperparameter Adjustment
+
+### 22.1 The Problem: Lost Deep Learning on Small Datasets
+- **Issue**: After optimizing hyperparameters for LoRA best practices (commit 8f05718b), small datasets (< 200 examples) lost their ability to deeply learn and memorize patterns
+- **Root Cause**: Conservative hyperparameters optimized for generalization don't work well for small datasets that need memorization:
+  - Learning rate too low (2e-5) for pattern learning
+  - Too few epochs (5) for convergence on small datasets
+  - High warmup ratio (0.1) delays effective learning rate
+  - NEFTune noise (0.1) interferes with deep memorization
+- **Symptom**: Model fails to learn patterns from small instruction datasets, even after expansion
+
+### 22.2 The Solution: Adaptive Hyperparameter Adjustment
+- **Automatic Detection**: Script detects small datasets (< 200 examples) and adjusts hyperparameters automatically
+- **Key Adjustments for Small Datasets**:
+  ```python
+  # Learning rate: Increase to 3.5e-5 for better pattern learning
+  if learning_rate < 3e-5:
+      learning_rate = 3.5e-5
+  
+  # Epochs: Increase to 8 for better convergence
+  if num_train_epochs < 8:
+      num_train_epochs = 8
+  
+  # Warmup: Reduce to 5% to reach effective LR faster
+  if warmup_ratio > 0.05:
+      warmup_ratio = 0.05
+  
+  # NEFTune: Reduce noise to 0.05 (less interference with memorization)
+  if neftune_noise_alpha > 0:
+      neftune_noise_alpha = 0.05
+  
+  # Early stopping: Increase patience to 7 for small datasets
+  if early_stopping_patience < 7:
+      early_stopping_patience = 7
+  ```
+
+### 22.3 Why These Adjustments Work
+- **Higher Learning Rate (3.5e-5)**: Small datasets need more aggressive learning to memorize patterns. 2e-5 is too conservative.
+- **More Epochs (8)**: Small datasets need more passes to fully learn patterns. 5 epochs may not be enough.
+- **Lower Warmup (5%)**: Faster ramp-up to effective learning rate allows more training at full LR.
+- **Reduced NEFTune (0.05)**: NEFTune helps generalization but can interfere with memorization. Lower noise preserves memorization while still providing some regularization.
+- **Higher Patience (7)**: Small datasets may have more variance in eval_loss. Higher patience prevents premature stopping.
+
+### 22.4 Implementation Details
+- **Detection Point**: After dataset expansion but before training arguments creation
+- **Threshold**: < 200 examples triggers small dataset mode
+- **Logging**: All adjustments are logged for transparency
+- **Non-Destructive**: Only increases values that are too low, doesn't override user settings that are already higher
+
+### 22.5 Best Practices
+- **For Small Datasets (< 200 examples)**:
+  - Let the script auto-adjust hyperparameters
+  - Monitor training logs to see which adjustments were made
+  - Consider manually increasing learning rate to 4e-5 if still not learning well
+  - Consider increasing epochs to 10 if convergence is slow
+  
+- **For Large Datasets (>= 200 examples)**:
+  - Default hyperparameters are optimized for generalization
+  - NEFTune at 0.1 provides good regularization
+  - Standard warmup ratio (0.1) is appropriate
+
+### 22.6 Key Takeaways
+1. **One Size Doesn't Fit All**: Small and large datasets need different hyperparameters
+2. **Memorization vs Generalization**: Small datasets need memorization, large datasets need generalization
+3. **Automatic Adjustment**: Script now automatically detects and adjusts for small datasets
+4. **Transparency**: All adjustments are logged so users know what changed
+5. **Balance NEFTune**: Lower noise for small datasets preserves memorization while maintaining some regularization

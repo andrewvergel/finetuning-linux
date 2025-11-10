@@ -46,16 +46,179 @@ pip install -r requirements.txt
 
 ### Server Deployment
 
-For detailed step-by-step server deployment instructions, see [SERVER_DEPLOYMENT.md](docs/SERVER_DEPLOYMENT.md).
+This section provides step-by-step instructions for deploying and running the LoRA fine-tuning pipeline on a Linux server with NVIDIA GPU support.
 
-The deployment guide covers:
-- NVIDIA driver installation
-- CUDA toolkit setup
-- Python environment configuration
-- Dataset preparation
-- Training execution
-- Monitoring and troubleshooting
-- Automation and scheduling
+#### Prerequisites
+
+- Linux server (Ubuntu 22.04+ recommended)
+- NVIDIA GPU with CUDA support (tested on RTX 4060 Ti 16GB)
+- Python 3.10 or higher
+- SSH access to the server
+- Basic knowledge of Linux command line
+
+#### Step 1: Initial Server Setup
+
+```bash
+# Update system packages
+sudo apt update && sudo apt upgrade -y
+
+# Install essential build tools
+sudo apt install -y build-essential git curl wget
+
+# Install NVIDIA drivers (for Ubuntu 22.04)
+sudo apt install -y nvidia-driver-535
+
+# Reboot to load drivers
+sudo reboot
+
+# After reboot, verify driver installation
+nvidia-smi
+```
+
+#### Step 2: Install CUDA Toolkit
+
+```bash
+# Download CUDA 12.1 (or latest version)
+wget https://developer.download.nvidia.com/compute/cuda/12.1.0/local_installers/cuda_12.1.0_530.30.02_linux.run
+
+# Make executable and install
+chmod +x cuda_12.1.0_530.30.02_linux.run
+sudo ./cuda_12.1.0_530.30.02_linux.run
+
+# Configure environment variables
+echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+source ~/.bashrc
+
+# Verify CUDA installation
+nvcc --version
+```
+
+#### Step 3: Set Up Python Environment
+
+```bash
+# Install Python 3.10+ if needed
+sudo apt install -y python3.10 python3.10-venv python3.10-dev python3-pip
+
+# Create project directory
+mkdir -p ~/projects/finetuning-lora
+cd ~/projects/finetuning-lora
+
+# Clone repository
+git clone https://github.com/andrewvergel/finetuning-linux-cuda.git .
+
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install PyTorch with CUDA support
+pip install --upgrade pip setuptools wheel
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# Verify PyTorch can see GPU
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"N/A\"}')"
+
+# Install project dependencies
+pip install "numpy<2.0" pyarrow==14.0.1
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,expandable_segments:True
+pip install -r requirements.txt
+```
+
+#### Step 4: Configure Environment
+
+```bash
+# Create .env file from example
+cp env.example .env
+
+# Edit .env file with your configuration
+nano .env
+
+# Set environment variables (optional, can also be in .env)
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,expandable_segments:True
+export CUDA_LAUNCH_BLOCKING=1
+export TOKENIZERS_PARALLELISM=false
+export HF_DATASETS_DISABLE_MULTIPROCESSING=1
+```
+
+#### Step 5: Prepare Dataset
+
+```bash
+# Create data directory
+mkdir -p data
+
+# Create instructions.jsonl file (see Instruction Dataset section above)
+nano data/instructions.jsonl
+
+# Validate dataset format
+python -c "
+import json
+with open('data/instructions.jsonl', 'r') as f:
+    for i, line in enumerate(f, 1):
+        try:
+            data = json.loads(line.strip())
+            assert 'input' in data and 'output' in data
+            print(f'Line {i}: OK')
+        except Exception as e:
+            print(f'Line {i}: ERROR - {e}')
+"
+```
+
+#### Step 6: Validate Environment and Run Training
+
+```bash
+# Run environment validation script
+python scripts/validate_environment.py
+
+# Start training
+source .venv/bin/activate
+python scripts/finetune_lora.py
+
+# Monitor training (in another terminal)
+tail -f logs/debug_last_run.log
+watch -n 1 nvidia-smi
+```
+
+#### Step 7: Run Training in Background (Optional)
+
+```bash
+# Run training in background with nohup
+nohup python scripts/finetune_lora.py > training.out 2>&1 &
+
+# Monitor output
+tail -f training.out
+
+# Check if process is running
+ps aux | grep finetune_lora.py
+```
+
+#### Troubleshooting
+
+**Out of Memory (OOM):**
+- Reduce batch size: `FT_PER_DEVICE_BATCH_SIZE=1`
+- Reduce sequence length: `FT_MAX_SEQ_LEN=256`
+- Increase gradient accumulation: `FT_GRADIENT_ACCUMULATION=16`
+
+**CUDA Out of Memory:**
+- Enable QLoRA: `FT_USE_QLORA=true`
+- Enable gradient checkpointing: `FT_GRADIENT_CHECKPOINTING=true`
+- Disable packing: `FT_FORCE_PACKING=false`
+
+**Slow Training:**
+- Increase batch size: `FT_PER_DEVICE_BATCH_SIZE=2`
+- Adjust gradient accumulation: `FT_GRADIENT_ACCUMULATION=4`
+
+#### Troubleshooting Checklist
+
+- [ ] NVIDIA drivers installed and working (`nvidia-smi` works)
+- [ ] CUDA toolkit installed and in PATH (`nvcc --version` works)
+- [ ] Python virtual environment activated
+- [ ] PyTorch can see GPU (`torch.cuda.is_available()` returns `True`)
+- [ ] All dependencies installed (`pip list` shows all packages)
+- [ ] Dataset file exists and is valid (`data/instructions.jsonl`)
+- [ ] `.env` file configured correctly
+- [ ] Sufficient disk space available (`df -h`)
+- [ ] Sufficient GPU memory available (`nvidia-smi`)
+- [ ] Logs directory writable (`ls -ld logs/`)
 
 > 💡 **New in v2.0.0:** The script has been refactored to use structured configuration classes (`ModelConfig`, `TrainingConfig`, `DataConfig`) for better code organization and maintainability.
 > 📦 `requirements.txt` includes all auxiliary libraries; however, we install `numpy<2.0` and `pyarrow==14.0.1` first to avoid known conflicts with `datasets` (`PyExtensionType` error).

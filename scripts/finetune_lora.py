@@ -378,6 +378,49 @@ def main():
     logging.info(f"  - Characters/example: {stats['avg_chars']:.1f}")
     logging.info(f"  - Estimated total tokens: {stats['approx_total_tokens']:,.0f}")
 
+    # Adjust hyperparameters for small datasets to improve deep learning
+    # Small datasets (< 200 examples) need more aggressive learning to memorize patterns
+    dataset_size = len(train_dataset)
+    is_small_dataset = dataset_size < 200
+    
+    if is_small_dataset:
+        logging.info("🔧 Small dataset detected (%d examples) - adjusting hyperparameters for deeper learning", dataset_size)
+        
+        # Increase learning rate for better pattern learning (3e-5 to 4e-5 for small datasets)
+        original_lr = training_config.learning_rate
+        if original_lr < 3e-5:
+            training_config.learning_rate = 3.5e-5
+            logging.info(f"  - Learning rate increased: {original_lr:.2e} -> {training_config.learning_rate:.2e}")
+        
+        # Increase epochs for better convergence (8-10 for small datasets)
+        if training_config.num_train_epochs < 8:
+            original_epochs = training_config.num_train_epochs
+            training_config.num_train_epochs = 8
+            logging.info(f"  - Epochs increased: {original_epochs} -> {training_config.num_train_epochs}")
+        
+        # Reduce warmup ratio to reach effective learning rate faster (5% instead of 10%)
+        if training_config.warmup_ratio > 0.05:
+            original_warmup = training_config.warmup_ratio
+            training_config.warmup_ratio = 0.05
+            logging.info(f"  - Warmup ratio reduced: {original_warmup} -> {training_config.warmup_ratio} (faster learning)")
+        
+        # Reduce or disable NEFTune for small datasets (it can interfere with deep memorization)
+        if training_config.neftune_noise_alpha is not None and training_config.neftune_noise_alpha > 0:
+            original_neftune = training_config.neftune_noise_alpha
+            # Reduce NEFTune noise for small datasets (0.05 instead of 0.1)
+            training_config.neftune_noise_alpha = 0.05
+            logging.info(f"  - NEFTune noise reduced: {original_neftune} -> {training_config.neftune_noise_alpha} (better memorization)")
+        
+        # Increase early stopping patience for small datasets
+        if training_config.early_stopping_patience < 7:
+            original_patience = training_config.early_stopping_patience
+            training_config.early_stopping_patience = 7
+            logging.info(f"  - Early stopping patience increased: {original_patience} -> {training_config.early_stopping_patience}")
+        
+        logging.info("✅ Hyperparameters adjusted for small dataset deep learning")
+    else:
+        logging.info("📊 Standard dataset size - using default hyperparameters optimized for generalization")
+
     # Determine if packing should be used
     force_packing = bool(os.getenv("FT_FORCE_PACKING", "false").lower() in ("true", "1", "yes"))
     use_packing = should_use_packing(train_dataset, stats, max_seq_len, force_packing)
