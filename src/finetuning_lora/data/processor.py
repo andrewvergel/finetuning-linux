@@ -498,28 +498,37 @@ class DataProcessor:
         
         # Validate dataset structure before returning
         # Ensure all examples have a "text" field that is a plain string
+        # We validate but don't modify to avoid creating nested structures
         def validate_text_field(example):
-            """Validate and fix text field if needed."""
+            """Validate text field format - raises error if invalid."""
             if "text" not in example:
                 raise ValueError(f"Example missing 'text' field. Keys: {list(example.keys())}")
             
             text = example["text"]
             
-            # Handle nested structures (shouldn't happen, but be defensive)
+            # Check for nested structures - this should never happen after format_example
             if isinstance(text, list):
-                logger.warning(f"Found list in text field, joining elements")
-                text = "".join(str(item) for item in text)
-            elif not isinstance(text, str):
-                text = str(text)
+                raise ValueError(
+                    f"Text field contains a list (nested structure). "
+                    f"This indicates a bug in format_example. First item: {text[0] if text else 'empty'}"
+                )
+            
+            # Ensure it's a string
+            if not isinstance(text, str):
+                raise ValueError(
+                    f"Text field must be a string, got {type(text)}. Value: {str(text)[:100]}"
+                )
             
             # Ensure it's a non-empty string
-            text = text.strip()
-            if not text:
+            if not text.strip():
                 raise ValueError("Text field is empty after processing")
             
-            return {"text": text}
+            # Return the example as-is (don't modify to avoid nested structures)
+            # The text field should already be correct from format_example
+            return example
         
-        # Apply validation to both datasets
+        # Apply validation to both datasets (validation only, no modification)
+        # We use remove_columns=[] to keep all columns and just validate
         train_dataset = train_dataset.map(
             validate_text_field,
             batched=False,

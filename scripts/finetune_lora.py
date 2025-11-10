@@ -46,7 +46,7 @@ if str(SRC_DIR) not in sys.path:
 import torch
 from datasets import Dataset, concatenate_datasets
 from packaging import version
-from transformers import TrainingArguments, EarlyStoppingCallback
+from transformers import TrainingArguments, EarlyStoppingCallback, DataCollatorForLanguageModeling
 from trl import SFTTrainer
 
 # Import structured components
@@ -294,6 +294,18 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         logging.info(">> Set tokenizer.pad_token to eos_token")
+    
+    # Ensure tokenizer has proper configuration for padding
+    # This is critical for SFTTrainer to work correctly
+    if not hasattr(tokenizer, 'pad_token_id') or tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+        logging.info(">> Set tokenizer.pad_token_id to eos_token_id")
+    
+    # Verify tokenizer configuration
+    logging.info(f">> Tokenizer pad_token: {tokenizer.pad_token}")
+    logging.info(f">> Tokenizer pad_token_id: {tokenizer.pad_token_id}")
+    logging.info(f">> Tokenizer eos_token: {tokenizer.eos_token}")
+    logging.info(f">> Tokenizer eos_token_id: {tokenizer.eos_token_id}")
 
     logging.info(">> Model loaded on %s", device)
 
@@ -447,6 +459,37 @@ def main():
     
     logging.info(f">> Dataset structure verified: text field length = {len(text_value)} chars")
     logging.info(f">> Sample text preview: {text_value[:100]}...")
+    
+    # Additional validation: Check multiple examples to ensure consistency
+    logging.info(">> Validating multiple dataset examples...")
+    for i in range(min(5, len(train_dataset))):
+        example = train_dataset[i]
+        if "text" not in example:
+            raise ValueError(f"Example {i} missing 'text' field")
+        text = example["text"]
+        if not isinstance(text, str):
+            raise ValueError(f"Example {i} has non-string text field: {type(text)}")
+        if isinstance(text, list):
+            raise ValueError(f"Example {i} has list in text field (nested structure)")
+        if not text.strip():
+            raise ValueError(f"Example {i} has empty text field")
+    logging.info(f">> Validated {min(5, len(train_dataset))} examples - all have proper string text fields")
+    
+    # Test tokenization on a sample to ensure it works correctly
+    logging.info(">> Testing tokenization on sample text...")
+    try:
+        test_tokenized = tokenizer(
+            text_value,
+            padding=True,
+            truncation=True,
+            max_length=max_seq_len,
+            return_tensors="pt"
+        )
+        logging.info(f">> Tokenization test successful: input_ids shape = {test_tokenized['input_ids'].shape}")
+        logging.info(f">> Tokenization test: attention_mask shape = {test_tokenized['attention_mask'].shape}")
+    except Exception as e:
+        logging.error(f">> Tokenization test failed: {e}")
+        raise ValueError(f"Tokenizer test failed - this will cause training to fail: {e}") from e
 
     # Initialize SFTTrainer
     logging.info("🚀 Inicializando SFTTrainer...")
@@ -474,6 +517,20 @@ def main():
 
     if training_config.dataset_num_proc is not None:
         sft_trainer_kwargs["dataset_num_proc"] = training_config.dataset_num_proc
+
+    # Ensure tokenizer padding is configured correctly
+    # SFTTrainer needs the tokenizer to handle padding properly
+    tokenizer.padding_side = "right"  # Right padding is standard for causal LM
+    tokenizer.truncation_side = "right"  # Truncate from the right
+    
+    logging.info(f">> Tokenizer padding_side: {tokenizer.padding_side}")
+    logging.info(f">> Tokenizer truncation_side: {tokenizer.truncation_side}")
+    
+    # NOTE: SFTTrainer handles tokenization internally
+    # We should NOT provide a data_collator when using SFTTrainer with text fields
+    # SFTTrainer will create its own data collator that handles tokenization
+    # Providing a custom data collator can interfere with SFTTrainer's tokenization
+    # Only use a custom data collator if you're pre-tokenizing the data yourself
 
     trainer = SFTTrainer(**sft_trainer_kwargs)
 
