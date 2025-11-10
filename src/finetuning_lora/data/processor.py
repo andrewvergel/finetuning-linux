@@ -349,6 +349,12 @@ class DataProcessor:
         if not text.endswith(eos_token):
             text += eos_token
         
+        # Ensure text is a plain string (not a list or other type)
+        if not isinstance(text, str):
+            text = str(text)
+        
+        # Return as a simple dictionary with text field
+        # SFTTrainer expects this format: {"text": "string"}
         return {"text": text}
     
     def tokenize_function(self, examples: Dict[str, List[Any]]) -> Dict[str, List[Any]]:

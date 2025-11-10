@@ -59,7 +59,8 @@ class TrainingConfig(BaseConfig):
     report_to: List[str] = field(default_factory=lambda: ["tensorboard"])
     
     # DataLoader settings
-    dataloader_num_workers: int = 2
+    # Note: num_workers=0 avoids multiprocessing serialization issues with SFTTrainer
+    dataloader_num_workers: int = 0
     dataloader_pin_memory: bool = True
     remove_unused_columns: bool = False
     

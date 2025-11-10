@@ -290,6 +290,11 @@ def main():
     model_builder = ModelBuilder(model_config=model_config, training_config=training_config)
     model, tokenizer = model_builder.load_model()
 
+    # Ensure tokenizer has pad_token set (required for SFTTrainer)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        logging.info(">> Set tokenizer.pad_token to eos_token")
+
     logging.info(">> Model loaded on %s", device)
 
     # Determine max sequence length
@@ -418,8 +423,26 @@ def main():
             )
         )
 
+    # Verify dataset structure before training
+    logging.info(">> Verifying dataset structure...")
+    sample_example = train_dataset[0]
+    if "text" not in sample_example:
+        raise ValueError(
+            f"Dataset missing 'text' field. Found keys: {list(sample_example.keys())}"
+        )
+    if not isinstance(sample_example["text"], str):
+        raise ValueError(
+            f"Dataset 'text' field must be a string, got {type(sample_example['text'])}"
+        )
+    logging.info(f">> Dataset structure verified: text field length = {len(sample_example['text'])} chars")
+
     # Initialize SFTTrainer
     logging.info("🚀 Inicializando SFTTrainer...")
+    logging.info(f">> Packing: {use_packing}")
+    logging.info(f">> Dataset text field: {training_config.dataset_text_field}")
+    logging.info(f">> Max sequence length: {max_seq_len}")
+    logging.info(f">> Tokenizer pad_token: {tokenizer.pad_token}")
+    logging.info(f">> Tokenizer pad_token_id: {tokenizer.pad_token_id}")
 
     sft_trainer_kwargs = {
         "model": model,
